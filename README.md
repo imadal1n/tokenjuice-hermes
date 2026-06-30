@@ -126,15 +126,15 @@ Install the plugin directory so Hermes can discover it as:
 $HERMES_HOME/plugins/tokenjuice-hermes/
   __init__.py
   compaction.py
+  json_types.py
   plugin.py
   plugin.yaml
   py.typed
 ```
 
-The plugin depends on Pydantic v2 for typed JSON boundary parsing. Package-based
-installs should install `tokenjuice-hermes` normally; directory-plugin wrappers
-must ensure Pydantic is importable in the Hermes Python runtime before enabling
-the plugin.
+The plugin uses only the Python standard library at runtime. Directory-plugin
+wrappers can copy the files directly without adding third-party Python packages
+to the Hermes runtime.
 
 Activation is controlled by Hermes configuration, for example by adding the
 plugin name to `plugins.enabled` in the target Hermes profile.
