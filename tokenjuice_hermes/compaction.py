@@ -1,26 +1,18 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import ClassVar, Final, TypeAlias
+from typing import Final
 
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
+from .json_types import (
+    FlatJsonObject,
+    JsonScalar,
     JsonValue,
-    TypeAdapter,
-    ValidationError,
-    field_validator,
+    TerminalJsonObject,
+    is_error_payload,
+    parse_flat_json_object,
 )
-
-JsonScalar: TypeAlias = None | bool | int | float | str
-FlatJsonObject: TypeAlias = dict[str, JsonScalar]
-TerminalJsonObject: TypeAlias = dict[str, JsonValue]
-
-
-FLAT_JSON_ADAPTER: Final[TypeAdapter[FlatJsonObject]] = TypeAdapter(FlatJsonObject)
-TERMINAL_JSON_ADAPTER: Final[TypeAdapter[TerminalJsonObject]] = TypeAdapter(TerminalJsonObject)
 
 TERMINAL_TOOL_NAMES: Final[frozenset[str]] = frozenset({"terminal", "execute_code"})
 PROTECTED_TOOL_NAMES: Final[frozenset[str]] = frozenset({"read_file"})
@@ -30,6 +22,17 @@ HEAD_LINES: Final[int] = 3
 TAIL_LINES: Final[int] = 2
 PREVIEW_CHARS: Final[int] = 72
 CONFIG_PREFIX: Final[str] = "tokenjuice_"
+OPTION_KEYS: Final[frozenset[str]] = frozenset(
+    {
+        "tokenjuice_mode",
+        "tokenjuice_min_text_chars",
+        "tokenjuice_head_lines",
+        "tokenjuice_tail_lines",
+        "tokenjuice_preview_chars",
+        "tokenjuice_text_fields",
+        "tokenjuice_tool_aliases",
+    }
+)
 
 
 class CompactionMode(StrEnum):
@@ -38,33 +41,15 @@ class CompactionMode(StrEnum):
     OFF = "off"
 
 
-class TokenjuiceOptions(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, extra="forbid")
-
-    mode: CompactionMode = Field(default=CompactionMode.HEAD_TAIL, alias="tokenjuice_mode")
-    min_text_chars: int = Field(default=MIN_TEXT_CHARS, ge=0, alias="tokenjuice_min_text_chars")
-    head_lines: int = Field(default=HEAD_LINES, ge=0, alias="tokenjuice_head_lines")
-    tail_lines: int = Field(default=TAIL_LINES, ge=0, alias="tokenjuice_tail_lines")
-    preview_chars: int = Field(default=PREVIEW_CHARS, ge=0, alias="tokenjuice_preview_chars")
-    text_fields: tuple[str, ...] = Field(default=TEXT_FIELDS, alias="tokenjuice_text_fields")
-    tool_aliases: frozenset[str] = Field(
-        default_factory=frozenset,
-        alias="tokenjuice_tool_aliases",
-    )
-
-    @field_validator("text_fields", mode="before")
-    @classmethod
-    def parse_text_fields(cls, value: JsonValue) -> JsonValue | tuple[str, ...]:
-        if isinstance(value, str):
-            return _split_csv(value)
-        return value
-
-    @field_validator("tool_aliases", mode="before")
-    @classmethod
-    def parse_tool_aliases(cls, value: JsonValue) -> JsonValue | tuple[str, ...]:
-        if isinstance(value, str):
-            return _split_csv(value)
-        return value
+@dataclass(frozen=True, slots=True)
+class TokenjuiceOptions:
+    mode: CompactionMode = CompactionMode.HEAD_TAIL
+    min_text_chars: int = MIN_TEXT_CHARS
+    head_lines: int = HEAD_LINES
+    tail_lines: int = TAIL_LINES
+    preview_chars: int = PREVIEW_CHARS
+    text_fields: tuple[str, ...] = TEXT_FIELDS
+    tool_aliases: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,14 +75,14 @@ def transform_tool_result(
     if tool_name not in _supported_tool_names(options):
         return None
 
-    parsed = _parse_json_object(result)
+    parsed = parse_flat_json_object(result)
     if parsed is None:
         return None
 
     compacted = _transform_terminal_result(parsed, options)
     if compacted is None:
         return None
-    return TERMINAL_JSON_ADAPTER.dump_json(compacted).decode()
+    return _dump_json_object(compacted)
 
 
 def _split_csv(value: str) -> tuple[str, ...]:
@@ -108,21 +93,73 @@ def _parse_options(kwargs: dict[str, JsonScalar]) -> TokenjuiceOptions | None:
     tokenjuice_kwargs = {
         key: value for key, value in kwargs.items() if key.startswith(CONFIG_PREFIX)
     }
-    try:
-        return TokenjuiceOptions.model_validate(tokenjuice_kwargs)
-    except ValidationError:
+    if not set(tokenjuice_kwargs).issubset(OPTION_KEYS):
         return None
+    return _build_options(tokenjuice_kwargs)
+
+
+def _build_options(values: FlatJsonObject) -> TokenjuiceOptions | None:
+    mode = _parse_mode(values.get("tokenjuice_mode"))
+    min_text_chars = _parse_nonnegative_int(values.get("tokenjuice_min_text_chars"), MIN_TEXT_CHARS)
+    head_lines = _parse_nonnegative_int(values.get("tokenjuice_head_lines"), HEAD_LINES)
+    tail_lines = _parse_nonnegative_int(values.get("tokenjuice_tail_lines"), TAIL_LINES)
+    preview_chars = _parse_nonnegative_int(values.get("tokenjuice_preview_chars"), PREVIEW_CHARS)
+    text_fields = _parse_string_tuple(values.get("tokenjuice_text_fields"), TEXT_FIELDS)
+    tool_aliases = _parse_string_tuple(values.get("tokenjuice_tool_aliases"), ())
+    if (
+        mode is None
+        or min_text_chars is None
+        or head_lines is None
+        or tail_lines is None
+        or preview_chars is None
+        or text_fields is None
+        or tool_aliases is None
+    ):
+        return None
+    return TokenjuiceOptions(
+        mode=mode,
+        min_text_chars=min_text_chars,
+        head_lines=head_lines,
+        tail_lines=tail_lines,
+        preview_chars=preview_chars,
+        text_fields=text_fields,
+        tool_aliases=frozenset(tool_aliases),
+    )
+
+
+def _parse_mode(value: JsonScalar) -> CompactionMode | None:
+    if value is None:
+        return CompactionMode.HEAD_TAIL
+    if not isinstance(value, str):
+        return None
+    try:
+        return CompactionMode(value)
+    except ValueError:
+        return None
+
+
+def _parse_nonnegative_int(value: JsonScalar, default: int) -> int | None:
+    if value is None:
+        return default
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
+def _parse_string_tuple(value: JsonScalar, default: tuple[str, ...]) -> tuple[str, ...] | None:
+    if value is None:
+        return default
+    if not isinstance(value, str):
+        return None
+    return _split_csv(value)
 
 
 def _supported_tool_names(options: TokenjuiceOptions) -> frozenset[str]:
     return TERMINAL_TOOL_NAMES | (options.tool_aliases - PROTECTED_TOOL_NAMES)
 
 
-def _parse_json_object(text: str) -> FlatJsonObject | None:
-    try:
-        return FLAT_JSON_ADAPTER.validate_json(text)
-    except ValidationError:
-        return None
+def _dump_json_object(payload: TerminalJsonObject) -> str:
+    return json.dumps(payload, separators=(",", ":"))
 
 
 def _transform_terminal_result(
@@ -196,23 +233,9 @@ def _compactable_text_fields(
     payload: FlatJsonObject,
     options: TokenjuiceOptions,
 ) -> tuple[str, ...]:
-    if _is_error_payload(payload):
+    if is_error_payload(payload):
         return tuple(field for field in options.text_fields if field != "stderr")
     return options.text_fields
-
-
-def _is_error_payload(payload: FlatJsonObject) -> bool:
-    exit_code = payload.get("exit")
-    status = payload.get("status")
-    return _is_nonzero_number(exit_code) or _is_error_status(status)
-
-
-def _is_nonzero_number(value: JsonScalar) -> bool:
-    return isinstance(value, int | float) and value != 0
-
-
-def _is_error_status(value: JsonScalar) -> bool:
-    return isinstance(value, str) and value.lower() in {"error", "errored", "failed", "failure"}
 
 
 def _compact_text(text: str, options: TokenjuiceOptions) -> CompactText | None:
