@@ -9,17 +9,16 @@ from types import ModuleType
 from typing import TypeAlias
 
 import pytest
-from pydantic import JsonValue, TypeAdapter
 
 from tokenjuice_hermes.compaction import transform_tool_result
+from tokenjuice_hermes.json_types import parse_flat_json_object, parse_json
 from tokenjuice_hermes.plugin import register
 
 JsonScalar: TypeAlias = None | bool | int | float | str
+JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
 FlatJsonObject: TypeAlias = dict[str, JsonScalar]
 TerminalJsonObject: TypeAlias = dict[str, JsonValue]
 HookCallback: TypeAlias = Callable[..., str | None]
-FLAT_JSON_ADAPTER = TypeAdapter(FlatJsonObject)
-TERMINAL_JSON_ADAPTER = TypeAdapter(TerminalJsonObject)
 
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
@@ -31,12 +30,16 @@ def load_fixture(name: str) -> str:
 
 
 def load_json_object(name: str) -> FlatJsonObject:
-    return FLAT_JSON_ADAPTER.validate_json(load_fixture(name))
+    value = parse_flat_json_object(load_fixture(name))
+    assert value is not None
+    return value
 
 
 def parse_result(result: str | None) -> TerminalJsonObject:
     assert isinstance(result, str)
-    return TERMINAL_JSON_ADAPTER.validate_json(result)
+    value = parse_json(result)
+    assert isinstance(value, dict)
+    return value
 
 
 def json_object(value: JsonValue) -> dict[str, JsonValue]:
@@ -70,11 +73,10 @@ def test_manifest_declares_transform_tool_result_hook() -> None:
     manifest = load_fixture("manifest.json")
 
     # When: the manifest is inspected for hook declarations.
-    plugin_name_found = '"name": "tokenjuice-hermes"' in manifest
     hook_found = '"transform_tool_result"' in manifest
 
     # Then: the plugin advertises transform_tool_result.
-    assert plugin_name_found
+    assert '"name": "tokenjuice-hermes"' in manifest
     assert hook_found
 
 
@@ -102,7 +104,14 @@ def test_installed_directory_plugin_layout_imports(tmp_path: Path) -> None:
     # Given: files copied into a flat Hermes directory-plugin layout.
     plugin_dir = tmp_path / "tokenjuice-hermes"
     plugin_dir.mkdir()
-    for name in ["__init__.py", "compaction.py", "plugin.py", "plugin.yaml", "py.typed"]:
+    for name in [
+        "__init__.py",
+        "compaction.py",
+        "json_types.py",
+        "plugin.py",
+        "plugin.yaml",
+        "py.typed",
+    ]:
         _ = (plugin_dir / name).write_text(
             (PACKAGE / name).read_text(encoding="utf-8"), encoding="utf-8"
         )
