@@ -1,0 +1,7 @@
+{
+  "command": "tokenjuice render --format json --verbose",
+  "exit": 1,
+  "status": "failed",
+  "stdout": "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10\nline 11\nline 12\nline 13\nline 14\nline 15",
+  "stderr": "warning: compact this output into valid JSON while keeping command, exit, and status intact"
+}

@@ -1,0 +1,5 @@
+name: tokenjuice-hermes
+version: "0.1.0"
+description: "Compact verbose terminal-like Hermes tool results through transform_tool_result while preserving exact file reads."
+hooks:
+  - transform_tool_result

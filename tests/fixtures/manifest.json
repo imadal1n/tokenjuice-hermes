@@ -1,0 +1,5 @@
+{
+  "name": "tokenjuice-hermes",
+  "version": "0.0.0",
+  "hooks": ["transform_tool_result"]
+}
