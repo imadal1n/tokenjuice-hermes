@@ -21,6 +21,8 @@ be copied into Hermes' directory-plugin layout.
 - Supports opt-in aliases for additional terminal-like tool names.
 - Supports `head_tail`, `metadata`, and `off` modes.
 - Leaves `read_file` results exact by returning `None` from the hook.
+- Keeps `stderr` exact for error results while still compacting other large text
+  fields.
 - Fails open: invalid JSON, unsupported tools, invalid options, and short outputs
   are left unchanged.
 
@@ -97,6 +99,10 @@ compactable through aliases or modes.
 `stdout`, `stderr`, and `output` remain strings when present. Metadata is kept
 under `tokenjuice` so consumers that read the original terminal fields can keep
 working.
+
+For error results, detected by non-zero `exit` or a status such as `failed` or
+`error`, `stderr` is preserved exactly. Other large fields, such as `stdout`, can
+still be compacted so failure context is not lost.
 
 ## Install
 
