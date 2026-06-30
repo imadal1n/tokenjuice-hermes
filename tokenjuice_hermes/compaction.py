@@ -144,8 +144,9 @@ def _compact_terminal_result(
 ) -> TerminalJsonObject | None:
     next_payload: TerminalJsonObject = dict(payload)
     fields: dict[str, JsonValue] = {}
+    text_fields = _compactable_text_fields(payload, options)
 
-    for field in options.text_fields:
+    for field in text_fields:
         value = payload.get(field)
         if isinstance(value, str):
             compacted = _compact_text(value, options)
@@ -189,6 +190,29 @@ def _metadata_terminal_result(
         fields=fields,
     )
     return next_payload
+
+
+def _compactable_text_fields(
+    payload: FlatJsonObject,
+    options: TokenjuiceOptions,
+) -> tuple[str, ...]:
+    if _is_error_payload(payload):
+        return tuple(field for field in options.text_fields if field != "stderr")
+    return options.text_fields
+
+
+def _is_error_payload(payload: FlatJsonObject) -> bool:
+    exit_code = payload.get("exit")
+    status = payload.get("status")
+    return _is_nonzero_number(exit_code) or _is_error_status(status)
+
+
+def _is_nonzero_number(value: JsonScalar) -> bool:
+    return isinstance(value, int | float) and value != 0
+
+
+def _is_error_status(value: JsonScalar) -> bool:
+    return isinstance(value, str) and value.lower() in {"error", "errored", "failed", "failure"}
 
 
 def _compact_text(text: str, options: TokenjuiceOptions) -> CompactText | None:

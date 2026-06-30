@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -41,6 +42,27 @@ def parse_result(result: str | None) -> TerminalJsonObject:
 def json_object(value: JsonValue) -> dict[str, JsonValue]:
     assert isinstance(value, dict)
     return value
+
+
+def terminal_payload(
+    *,
+    stdout: str,
+    stderr: str = "",
+    exit_code: int = 0,
+    status: str = "ok",
+) -> str:
+    payload: FlatJsonObject = {
+        "command": "tokenjuice render --format json --verbose",
+        "exit": exit_code,
+        "status": status,
+        "stdout": stdout,
+        "stderr": stderr,
+    }
+    return json.dumps(payload)
+
+
+def numbered_lines(prefix: str, count: int) -> str:
+    return "\n".join(f"{prefix} {number:02d}" for number in range(1, count + 1))
 
 
 def test_manifest_declares_transform_tool_result_hook() -> None:
@@ -130,11 +152,17 @@ def test_short_terminal_json_is_left_unchanged() -> None:
 
 
 def test_long_terminal_json_is_compacted_without_losing_core_fields() -> None:
-    # Given: a long terminal JSON result that needs compaction.
+    # Given: a terminal JSON result compacted through explicit legacy-sized options.
     original = load_fixture("terminal-long.json")
 
     # When: the plugin transforms the terminal result.
-    result = transform_tool_result(original, tool_name="terminal")
+    result = transform_tool_result(
+        original,
+        tool_name="terminal",
+        tokenjuice_min_text_chars=1,
+        tokenjuice_head_lines=3,
+        tokenjuice_tail_lines=2,
+    )
 
     # Then: the result remains valid JSON and preserves key fields.
     compacted = parse_result(result)
@@ -161,12 +189,66 @@ def test_long_terminal_json_is_compacted_without_losing_core_fields() -> None:
     assert len(str(compacted["stdout"])) < len(str(source["stdout"]))
 
 
+def test_defaults_compact_long_terminal_output_with_three_head_two_tail_lines() -> None:
+    # Given: output above the default compaction threshold.
+    original = terminal_payload(stdout=numbered_lines("stdout", 120))
+
+    # When: terminal output is transformed with defaults.
+    result = transform_tool_result(original, tool_name="terminal")
+
+    # Then: defaults keep three head lines and two tail lines.
+    compacted = parse_result(result)
+    stdout = compacted["stdout"]
+    assert isinstance(stdout, str)
+    assert stdout.startswith("stdout 01\nstdout 02\nstdout 03")
+    assert "[tokenjuice-hermes: omitted 115 middle lines]" in stdout
+    assert stdout.endswith("stdout 119\nstdout 120")
+
+
+def test_defaults_compact_historical_long_terminal_fixture() -> None:
+    # Given: the historical compact fixture crosses the default line threshold.
+    original = load_fixture("terminal-long.json")
+
+    # When: terminal output is transformed with defaults.
+    result = transform_tool_result(original, tool_name="terminal")
+
+    # Then: the hook compacts it by default.
+    compacted = parse_result(result)
+    meta = json_object(compacted["tokenjuice"])
+    assert meta["compacted"] is True
+
+
+def test_error_result_preserves_stderr_while_compacting_stdout() -> None:
+    # Given: an error result with large stdout and large stderr.
+    stderr = numbered_lines("stderr", 120)
+    original = terminal_payload(
+        stdout=numbered_lines("stdout", 120),
+        stderr=stderr,
+        exit_code=1,
+        status="failed",
+    )
+
+    # When: terminal output is transformed with defaults.
+    result = transform_tool_result(original, tool_name="terminal")
+
+    # Then: stdout is compacted, but stderr stays exact for error context.
+    compacted = parse_result(result)
+    stdout = compacted["stdout"]
+    assert isinstance(stdout, str)
+    assert "[tokenjuice-hermes: omitted 115 middle lines]" in stdout
+    assert compacted["stderr"] == stderr
+
+
 def test_execute_code_uses_default_terminal_compaction() -> None:
     # Given: execute_code emits the same terminal-like JSON shape.
     original = load_fixture("terminal-long.json")
 
     # When: the plugin transforms the execute_code result.
-    result = transform_tool_result(original, tool_name="execute_code")
+    result = transform_tool_result(
+        original,
+        tool_name="execute_code",
+        tokenjuice_min_text_chars=1,
+    )
 
     # Then: the default terminal compaction path is used.
     compacted = parse_result(result)
@@ -205,7 +287,10 @@ def test_tool_aliases_enable_extra_terminal_like_names() -> None:
 
     # When: the tool name is explicitly added through flat kwargs.
     result = transform_tool_result(
-        original, tool_name="shell", tokenjuice_tool_aliases="shell,bash"
+        original,
+        tool_name="shell",
+        tokenjuice_tool_aliases="shell,bash",
+        tokenjuice_min_text_chars=1,
     )
 
     # Then: aliases opt the tool into terminal compaction.
@@ -253,6 +338,7 @@ def test_metadata_mode_preserves_text_fields_and_adds_previews() -> None:
         original,
         tool_name="terminal",
         tokenjuice_mode="metadata",
+        tokenjuice_min_text_chars=1,
         tokenjuice_preview_chars=12,
     )
 
