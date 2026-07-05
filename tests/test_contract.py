@@ -248,6 +248,32 @@ def test_error_result_preserves_stderr_while_compacting_stdout() -> None:
     assert compacted["stderr"] == stderr
 
 
+def test_error_result_preserves_traceback_embedded_in_output() -> None:
+    # Given: execute_code embeds stderr tracebacks inside the output field.
+    traceback_output = "\n".join(
+        [
+            "--- stderr ---",
+            "Traceback (most recent call last):",
+            *numbered_lines("frame", 120).splitlines(),
+            "ValueError: I/O operation on closed file.",
+        ]
+    )
+    original = json.dumps(
+        {
+            "status": "error",
+            "output": traceback_output,
+            "tool_calls_made": 0,
+            "duration_seconds": 0.05,
+        }
+    )
+
+    # When: the execute_code error result is transformed with defaults.
+    result = transform_tool_result(original, tool_name="execute_code")
+
+    # Then: the traceback-bearing output stays exact for debugging context.
+    assert result is None or parse_result(result)["output"] == traceback_output
+
+
 def test_execute_code_uses_default_terminal_compaction() -> None:
     # Given: execute_code emits the same terminal-like JSON shape.
     original = load_fixture("terminal-long.json")

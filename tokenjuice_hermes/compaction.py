@@ -17,6 +17,10 @@ from .json_types import (
 TERMINAL_TOOL_NAMES: Final[frozenset[str]] = frozenset({"terminal", "execute_code"})
 PROTECTED_TOOL_NAMES: Final[frozenset[str]] = frozenset({"read_file"})
 TEXT_FIELDS: Final[tuple[str, ...]] = ("stdout", "stderr", "output")
+EMBEDDED_DIAGNOSTIC_MARKERS: Final[tuple[str, ...]] = (
+    "--- stderr ---",
+    "Traceback (most recent call last):",
+)
 MIN_TEXT_CHARS: Final[int] = 240
 HEAD_LINES: Final[int] = 3
 TAIL_LINES: Final[int] = 2
@@ -233,9 +237,24 @@ def _compactable_text_fields(
     payload: FlatJsonObject,
     options: TokenjuiceOptions,
 ) -> tuple[str, ...]:
-    if is_error_payload(payload):
-        return tuple(field for field in options.text_fields if field != "stderr")
-    return options.text_fields
+    if not is_error_payload(payload):
+        return options.text_fields
+
+    fields: list[str] = []
+    for field in options.text_fields:
+        value = payload.get(field)
+        if field == "stderr" or _is_embedded_diagnostic_field(field, value):
+            continue
+        fields.append(field)
+    return tuple(fields)
+
+
+def _is_embedded_diagnostic_field(field: str, value: JsonScalar) -> bool:
+    return field == "output" and isinstance(value, str) and _has_embedded_diagnostic(value)
+
+
+def _has_embedded_diagnostic(text: str) -> bool:
+    return any(marker in text for marker in EMBEDDED_DIAGNOSTIC_MARKERS)
 
 
 def _compact_text(text: str, options: TokenjuiceOptions) -> CompactText | None:
