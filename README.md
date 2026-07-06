@@ -1,42 +1,26 @@
 # tokenjuice-hermes
 
-`tokenjuice-hermes` is a generic Hermes directory plugin that compacts verbose
-terminal-like tool results through the `transform_tool_result` hook.
-
-The plugin is intentionally runtime-agnostic. It does not assume a specific host,
-workspace, identity, chat bridge, or deployment layout.
+`tokenjuice-hermes` is a Hermes directory plugin for keeping noisy tool output
+out of model context without losing recoverability.
 
 ## Status
 
-This is an alpha plugin for Hermes runtimes that support the
-`transform_tool_result` hook. It is packaged as normal Python code and can also
-be copied into Hermes' directory-plugin layout.
+Alpha. Requires a Hermes runtime with `transform_tool_result`; request pruning,
+fetch, and passref activate only when the host exposes their registration hooks.
 
 ## Behavior
 
-- Compacts verbose JSON results from terminal-like tools such as `terminal` and
-  `execute_code`.
-- Rescues oversized results from eligible web/MCP/browser tools by storing the
-  full content in a session-scoped blob store and emitting a short preview plus
-  an opaque `rescuer_fetch` handle.
-- Prunes older terminal-like tool results in outbound LLM requests through
-  Hermes' `llm_request` middleware when request history is under context
-  pressure.
-- Optionally expands rescued handles inside subsequent tool requests through a
-  `tool_request` middleware (`passref`). This is **disabled by default** and
-  requires an explicit allowlist.
-- Preserves structured metadata such as `command`, `exit`, `status`, `cwd`, and
-  other fields already present in the tool result.
-- Supports opt-in aliases for additional terminal-like tool names.
-- Supports `head_tail`, `metadata`, and `off` modes.
-- Leaves `read_file` results exact by returning `None` from the hook.
-- Preserves `read_file` results during request-history pruning and refuses to
-  expand rescued handles into `read_file` or `diagnostics` tools.
-- Keeps error diagnostics exact, including `stderr` and traceback-bearing
-  `output` fields, while still compacting other large text fields; rescue does
-  not apply to error payloads.
-- Fails open: invalid JSON, unsupported tools, invalid options, short outputs,
-  missing sessions, and missing stores are left unchanged.
+- Compacts verbose terminal-like JSON results (`terminal`, `execute_code`, and
+  configured aliases) with `head_tail`, `metadata`, or `off` modes.
+- Prunes older terminal-like results in outbound `llm_request` payloads when
+  request history is under context pressure.
+- Rescues oversized web/MCP/browser results into a session-scoped blob store and
+  emits a preview plus an opaque `rescuer_fetch` handle.
+- Optionally expands rescued handles inside later tool requests through passref.
+  Passref is disabled by default and requires an explicit allowlist.
+- Keeps `read_file`, diagnostics, `stderr`, traceback-bearing output, malformed
+  inputs, unsupported tools, missing sessions, and missing stores exact or
+  unchanged.
 
 Compacted payloads stay valid JSON and include a `tokenjuice` object:
 
@@ -250,8 +234,8 @@ for the configured secondary TTL so that fetch requests return a clear
 
 ## Deferred Live Activation
 
-The source implementation in this repository is complete and persistent. Actual
-live behavior inside a Hermes runtime depends on:
+This repository only ships source and package wiring. Live Hermes behavior still
+depends on:
 
 - the Hermes profile enabling the `tokenjuice-hermes` plugin;
 - the runtime exposing `transform_tool_result`, `llm_request`, `register_tool`,
@@ -259,9 +243,8 @@ live behavior inside a Hermes runtime depends on:
 - a writable rescue store path mounted into the runtime;
 - an operator decision to enable passref and populate its allowlist.
 
-Activating the plugin in a running system requires `rebuild`/rebuild and/or a
-container recreate; those steps are intentionally deferred to the operator/operator
-and are not performed by this task.
+Activation requires `rebuild`/rebuild and/or container recreate; those operator steps
+are deliberately outside this package.
 
 ## Install
 
@@ -343,6 +326,13 @@ same checks on Python 3.11, 3.12, and 3.13.
 
 Deployment wrappers should keep activation, passref enablement, and allowlist
 population as separate operator decisions.
+
+## Credits
+
+- Inspired by the ClawHub
+  [TokenJuice plugin](https://clawhub.ai/openclaw/plugins/tokenjuice).
+- Rescue/fetch and pass-by-reference concepts are informed by
+  [Toolaria](https://github.com/Sahil-SS9/Toolaria).
 
 ## License
 
