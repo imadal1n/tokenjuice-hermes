@@ -2,9 +2,16 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from enum import StrEnum
 from typing import Final
 
+from .compaction_options import (
+    PROTECTED_TOOL_NAMES,
+    TEXT_FIELDS,
+    CompactionMode,
+    TokenjuiceOptions,
+    parse_options,
+    supported_tool_names,
+)
 from .json_types import (
     FlatJsonObject,
     JsonScalar,
@@ -13,47 +20,12 @@ from .json_types import (
     is_error_payload,
     parse_flat_json_object,
 )
+from .rescue_transform import parse_rescue_options, transform_rescue_result
 
-TERMINAL_TOOL_NAMES: Final[frozenset[str]] = frozenset({"terminal", "execute_code"})
-PROTECTED_TOOL_NAMES: Final[frozenset[str]] = frozenset({"read_file"})
-TEXT_FIELDS: Final[tuple[str, ...]] = ("stdout", "stderr", "output")
 EMBEDDED_DIAGNOSTIC_MARKERS: Final[tuple[str, ...]] = (
     "--- stderr ---",
     "Traceback (most recent call last):",
 )
-MIN_TEXT_CHARS: Final[int] = 4_000
-HEAD_LINES: Final[int] = 40
-TAIL_LINES: Final[int] = 20
-PREVIEW_CHARS: Final[int] = 160
-CONFIG_PREFIX: Final[str] = "tokenjuice_"
-OPTION_KEYS: Final[frozenset[str]] = frozenset(
-    {
-        "tokenjuice_mode",
-        "tokenjuice_min_text_chars",
-        "tokenjuice_head_lines",
-        "tokenjuice_tail_lines",
-        "tokenjuice_preview_chars",
-        "tokenjuice_text_fields",
-        "tokenjuice_tool_aliases",
-    }
-)
-
-
-class CompactionMode(StrEnum):
-    HEAD_TAIL = "head_tail"
-    METADATA = "metadata"
-    OFF = "off"
-
-
-@dataclass(frozen=True, slots=True)
-class TokenjuiceOptions:
-    mode: CompactionMode = CompactionMode.HEAD_TAIL
-    min_text_chars: int = MIN_TEXT_CHARS
-    head_lines: int = HEAD_LINES
-    tail_lines: int = TAIL_LINES
-    preview_chars: int = PREVIEW_CHARS
-    text_fields: tuple[str, ...] = TEXT_FIELDS
-    tool_aliases: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,16 +41,29 @@ def transform_tool_result(
     tool_name: str = "",
     **kwargs: JsonScalar,
 ) -> str | None:
+    # Exactness guard: protected tools are never rewritten.
     if tool_name in PROTECTED_TOOL_NAMES:
         return None
 
-    options = _parse_options(kwargs)
+    options = parse_options(kwargs)
     if options is None:
         return None
 
-    if tool_name not in _supported_tool_names(options):
-        return None
+    # Terminal compaction path.
+    if tool_name in supported_tool_names(options):
+        return _transform_terminal_path(result, options)
 
+    # Additive rescue path for eligible web/MCP/browser tools.
+    rescue_options = parse_rescue_options(kwargs)
+    if rescue_options is None:
+        return None
+    return transform_rescue_result(result, tool_name, rescue_options)
+
+
+def _transform_terminal_path(
+    result: str,
+    options: TokenjuiceOptions,
+) -> str | None:
     parsed = parse_flat_json_object(result)
     if parsed is None:
         return None
@@ -87,79 +72,6 @@ def transform_tool_result(
     if compacted is None:
         return None
     return _dump_json_object(compacted)
-
-
-def _split_csv(value: str) -> tuple[str, ...]:
-    return tuple(item.strip() for item in value.split(",") if item.strip())
-
-
-def _parse_options(kwargs: dict[str, JsonScalar]) -> TokenjuiceOptions | None:
-    tokenjuice_kwargs = {
-        key: value for key, value in kwargs.items() if key.startswith(CONFIG_PREFIX)
-    }
-    if not set(tokenjuice_kwargs).issubset(OPTION_KEYS):
-        return None
-    return _build_options(tokenjuice_kwargs)
-
-
-def _build_options(values: FlatJsonObject) -> TokenjuiceOptions | None:
-    mode = _parse_mode(values.get("tokenjuice_mode"))
-    min_text_chars = _parse_nonnegative_int(values.get("tokenjuice_min_text_chars"), MIN_TEXT_CHARS)
-    head_lines = _parse_nonnegative_int(values.get("tokenjuice_head_lines"), HEAD_LINES)
-    tail_lines = _parse_nonnegative_int(values.get("tokenjuice_tail_lines"), TAIL_LINES)
-    preview_chars = _parse_nonnegative_int(values.get("tokenjuice_preview_chars"), PREVIEW_CHARS)
-    text_fields = _parse_string_tuple(values.get("tokenjuice_text_fields"), TEXT_FIELDS)
-    tool_aliases = _parse_string_tuple(values.get("tokenjuice_tool_aliases"), ())
-    if (
-        mode is None
-        or min_text_chars is None
-        or head_lines is None
-        or tail_lines is None
-        or preview_chars is None
-        or text_fields is None
-        or tool_aliases is None
-    ):
-        return None
-    return TokenjuiceOptions(
-        mode=mode,
-        min_text_chars=min_text_chars,
-        head_lines=head_lines,
-        tail_lines=tail_lines,
-        preview_chars=preview_chars,
-        text_fields=text_fields,
-        tool_aliases=frozenset(tool_aliases),
-    )
-
-
-def _parse_mode(value: JsonScalar) -> CompactionMode | None:
-    if value is None:
-        return CompactionMode.HEAD_TAIL
-    if not isinstance(value, str):
-        return None
-    try:
-        return CompactionMode(value)
-    except ValueError:
-        return None
-
-
-def _parse_nonnegative_int(value: JsonScalar, default: int) -> int | None:
-    if value is None:
-        return default
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        return None
-    return value
-
-
-def _parse_string_tuple(value: JsonScalar, default: tuple[str, ...]) -> tuple[str, ...] | None:
-    if value is None:
-        return default
-    if not isinstance(value, str):
-        return None
-    return _split_csv(value)
-
-
-def _supported_tool_names(options: TokenjuiceOptions) -> frozenset[str]:
-    return TERMINAL_TOOL_NAMES | (options.tool_aliases - PROTECTED_TOOL_NAMES)
 
 
 def _dump_json_object(payload: TerminalJsonObject) -> str:

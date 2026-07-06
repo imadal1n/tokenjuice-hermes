@@ -4,6 +4,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TypeAlias
 
+from tests.host_fixtures import HookOnlyHost, MiddlewareHost
 from tokenjuice_hermes.json_types import JsonValue, parse_json
 from tokenjuice_hermes.plugin import register
 
@@ -20,28 +21,6 @@ def load_fixture(name: str) -> str:
 
 def numbered_lines(prefix: str, count: int) -> str:
     return "\n".join(f"{prefix} {number:02d}" for number in range(1, count + 1))
-
-
-class HookOnlyHost:
-    def __init__(self) -> None:
-        self.hooks: list[str] = []
-
-    def register_hook(self, name: str, callback: Callable[..., str | None]) -> None:
-        _ = callback
-        self.hooks.append(name)
-
-
-class MiddlewareHost(HookOnlyHost):
-    def __init__(self) -> None:
-        super().__init__()
-        self.middlewares: dict[str, MiddlewareCallback] = {}
-
-    def register_middleware(
-        self,
-        name: str,
-        callback: MiddlewareCallback,
-    ) -> None:
-        self.middlewares[name] = callback
 
 
 def request_payload(
@@ -120,9 +99,9 @@ def test_register_adds_llm_request_middleware_when_supported() -> None:
     # When: the plugin registers itself.
     register(host)
 
-    # Then: the transformer hook and llm_request middleware are both registered.
+    # Then: the transformer hook and both middlewares are registered.
     assert host.hooks == ["transform_tool_result"]
-    assert list(host.middlewares) == ["llm_request"]
+    assert set(host.middlewares) == {"llm_request", "tool_request"}
 
 
 def test_register_stays_compatible_with_hook_only_hosts() -> None:
