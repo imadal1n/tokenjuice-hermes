@@ -28,6 +28,8 @@ fetch, and passref activate only when the host exposes their registration hooks.
   passref behavior.
 - [Configuration](docs/configuration.md): kwargs, plugin layout, store lifecycle,
   and deployment boundaries.
+- [Security](docs/security.md): exactness guarantees, session isolation, sink
+  protections, and non-goals.
 
 ## Install
 
