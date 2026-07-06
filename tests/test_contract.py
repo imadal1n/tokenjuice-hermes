@@ -110,6 +110,7 @@ def test_installed_directory_plugin_layout_imports(tmp_path: Path) -> None:
         "json_types.py",
         "plugin.py",
         "plugin.yaml",
+        "request_pruning.py",
         "py.typed",
     ]:
         _ = (plugin_dir / name).write_text(
@@ -171,6 +172,7 @@ def test_long_terminal_json_is_compacted_without_losing_core_fields() -> None:
         tokenjuice_min_text_chars=1,
         tokenjuice_head_lines=3,
         tokenjuice_tail_lines=2,
+        tokenjuice_preview_chars=72,
     )
 
     # Then: the result remains valid JSON and preserves key fields.
@@ -198,33 +200,32 @@ def test_long_terminal_json_is_compacted_without_losing_core_fields() -> None:
     assert len(str(compacted["stdout"])) < len(str(source["stdout"]))
 
 
-def test_defaults_compact_long_terminal_output_with_three_head_two_tail_lines() -> None:
+def test_defaults_compact_long_terminal_output_with_larger_head_tail_windows() -> None:
     # Given: output above the default compaction threshold.
     original = terminal_payload(stdout=numbered_lines("stdout", 120))
 
     # When: terminal output is transformed with defaults.
     result = transform_tool_result(original, tool_name="terminal")
 
-    # Then: defaults keep three head lines and two tail lines.
+    # Then: defaults keep a wider head and tail window.
     compacted = parse_result(result)
     stdout = compacted["stdout"]
     assert isinstance(stdout, str)
     assert stdout.startswith("stdout 01\nstdout 02\nstdout 03")
-    assert "[tokenjuice-hermes: omitted 115 middle lines]" in stdout
+    assert "stdout 40" in stdout
+    assert "[tokenjuice-hermes: omitted 60 middle lines]" in stdout
     assert stdout.endswith("stdout 119\nstdout 120")
 
 
-def test_defaults_compact_historical_long_terminal_fixture() -> None:
-    # Given: the historical compact fixture crosses the default line threshold.
+def test_defaults_leave_historical_short_terminal_fixture_unchanged() -> None:
+    # Given: the historical compact fixture is short under the current defaults.
     original = load_fixture("terminal-long.json")
 
     # When: terminal output is transformed with defaults.
     result = transform_tool_result(original, tool_name="terminal")
 
-    # Then: the hook compacts it by default.
-    compacted = parse_result(result)
-    meta = json_object(compacted["tokenjuice"])
-    assert meta["compacted"] is True
+    # Then: the hook leaves it unchanged.
+    assert result is None
 
 
 def test_error_result_preserves_stderr_while_compacting_stdout() -> None:
@@ -244,7 +245,7 @@ def test_error_result_preserves_stderr_while_compacting_stdout() -> None:
     compacted = parse_result(result)
     stdout = compacted["stdout"]
     assert isinstance(stdout, str)
-    assert "[tokenjuice-hermes: omitted 115 middle lines]" in stdout
+    assert "[tokenjuice-hermes: omitted 60 middle lines]" in stdout
     assert compacted["stderr"] == stderr
 
 

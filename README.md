@@ -16,11 +16,15 @@ be copied into Hermes' directory-plugin layout.
 
 - Compacts verbose JSON results from terminal-like tools such as `terminal` and
   `execute_code`.
+- Prunes older terminal-like tool results in outbound LLM requests through
+  Hermes' `llm_request` middleware when request history is under context
+  pressure.
 - Preserves structured metadata such as `command`, `exit`, `status`, `cwd`, and
   other fields already present in the tool result.
 - Supports opt-in aliases for additional terminal-like tool names.
 - Supports `head_tail`, `metadata`, and `off` modes.
 - Leaves `read_file` results exact by returning `None` from the hook.
+- Preserves `read_file` results during request-history pruning.
 - Keeps error diagnostics exact, including `stderr` and traceback-bearing
   `output` fields, while still compacting other large text fields.
 - Fails open: invalid JSON, unsupported tools, invalid options, and short outputs
@@ -63,10 +67,10 @@ config directly.
 | Kwarg | Default | Description |
 |---|---:|---|
 | `tokenjuice_mode` | `head_tail` | `head_tail`, `metadata`, or `off`. |
-| `tokenjuice_min_text_chars` | `240` | Minimum text length that can trigger processing. |
-| `tokenjuice_head_lines` | `3` | Lines to keep from the start in `head_tail` mode. |
-| `tokenjuice_tail_lines` | `2` | Lines to keep from the end in `head_tail` mode. |
-| `tokenjuice_preview_chars` | `72` | Original text preview stored in metadata. |
+| `tokenjuice_min_text_chars` | `4000` | Minimum text length that can trigger processing. |
+| `tokenjuice_head_lines` | `40` | Lines to keep from the start in `head_tail` mode. |
+| `tokenjuice_tail_lines` | `20` | Lines to keep from the end in `head_tail` mode. |
+| `tokenjuice_preview_chars` | `160` | Original text preview stored in metadata. |
 | `tokenjuice_text_fields` | `stdout,stderr,output` | Comma-separated JSON string fields to inspect. |
 | `tokenjuice_tool_aliases` | empty | Comma-separated extra terminal-like tool names. |
 
@@ -75,10 +79,10 @@ Example hook kwargs:
 ```python
 {
     "tokenjuice_mode": "head_tail",
-    "tokenjuice_min_text_chars": 1000,
-    "tokenjuice_head_lines": 4,
-    "tokenjuice_tail_lines": 4,
-    "tokenjuice_preview_chars": 120,
+    "tokenjuice_min_text_chars": 4000,
+    "tokenjuice_head_lines": 40,
+    "tokenjuice_tail_lines": 20,
+    "tokenjuice_preview_chars": 160,
     "tokenjuice_text_fields": "stdout,stderr,output,logs",
     "tokenjuice_tool_aliases": "shell,bash,run_command",
 }
@@ -99,6 +103,19 @@ compactable through aliases or modes.
 `stdout`, `stderr`, and `output` remain strings when present. Metadata is kept
 under `tokenjuice` so consumers that read the original terminal fields can keep
 working.
+
+## Request-History Pruning
+
+On Hermes versions that support middleware registration, `tokenjuice-hermes`
+also registers an `llm_request` middleware. This middleware works on the
+provider-request copy only: it can shorten old terminal-like tool results before
+the next model call, but it does not rewrite the persisted session transcript or
+change tool execution.
+
+The middleware uses Hermes context-pressure metadata when available, including
+`request_pressure_tokens`, `threshold_tokens`, and `compression_enabled`. On
+older hosts that do not provide those fields, it falls back to a request-size
+threshold. Recent tail tool results and all `read_file` results remain exact.
 
 For error results, detected by non-zero `exit` or a status such as `failed` or
 `error`, `stderr` is preserved exactly. If a tool embeds stderr/traceback text in
@@ -130,6 +147,7 @@ $HERMES_HOME/plugins/tokenjuice-hermes/
   json_types.py
   plugin.py
   plugin.yaml
+  request_pruning.py
   py.typed
 ```
 

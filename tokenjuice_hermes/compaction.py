@@ -21,10 +21,10 @@ EMBEDDED_DIAGNOSTIC_MARKERS: Final[tuple[str, ...]] = (
     "--- stderr ---",
     "Traceback (most recent call last):",
 )
-MIN_TEXT_CHARS: Final[int] = 240
-HEAD_LINES: Final[int] = 3
-TAIL_LINES: Final[int] = 2
-PREVIEW_CHARS: Final[int] = 72
+MIN_TEXT_CHARS: Final[int] = 4_000
+HEAD_LINES: Final[int] = 40
+TAIL_LINES: Final[int] = 20
+PREVIEW_CHARS: Final[int] = 160
 CONFIG_PREFIX: Final[str] = "tokenjuice_"
 OPTION_KEYS: Final[frozenset[str]] = frozenset(
     {
