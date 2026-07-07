@@ -252,3 +252,45 @@ def test_registered_transform_uses_hermes_config_file_without_ctx_config(
     assert result is not None
     assert "tool result rescued" in result
     assert extract_hex_handle(result) is not None
+
+
+def test_registered_transform_uses_top_level_hermes_config_without_ctx_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: live Hermes-style config stores tokenjuice keys at top level.
+    config_file = tmp_path / "config.yaml"
+    _ = config_file.write_text(
+        f"""plugins:
+  enabled:
+    - tokenjuice-hermes
+
+tokenjuice_rescue_store_path: '{tmp_path}'
+tokenjuice_rescue_min_text_chars: 4000
+tokenjuice_rescue_tool_names: web_search,mcp_tool,browser_snapshot,terminal,execute_code
+tokenjuice_rescue_tool_min_text_chars: terminal=2500,execute_code=2500
+tokenjuice_passref_enabled: false
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HERMES_CONFIG_PATH", str(config_file))
+
+    host = ToolHost()
+    del host.config
+    register(host)
+    transform = host.callbacks["transform_tool_result"]
+
+    content = "\n".join(f"agent-terminal-line-{line:03d}" for line in range(140))
+    assert 2_500 < len(content) < 4_000
+
+    # When: Hermes invokes the hook with no repeated config kwargs.
+    result = transform(
+        json.dumps({"stdout": content}),
+        tool_name="terminal",
+        session_id="session-a",
+    )
+
+    # Then: top-level persisted config is enough to produce a rescue handle.
+    assert result is not None
+    assert "tool result rescued" in result
+    assert extract_hex_handle(result) is not None

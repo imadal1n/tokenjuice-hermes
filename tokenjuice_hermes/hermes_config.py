@@ -11,6 +11,7 @@ if TYPE_CHECKING:
 _HERMES_CONFIG_PATH: str = "/opt/data/config.yaml"
 _HERMES_CONFIG_ENV: str = "HERMES_CONFIG_PATH"
 _HERMES_PLUGIN_NAME: str = "tokenjuice-hermes"
+_TOKENJUICE_PREFIX: str = "tokenjuice_"
 _QUOTE_CHARS: frozenset[str] = frozenset({'"', "'"})
 _MIN_QUOTED_LENGTH: int = 2
 
@@ -38,6 +39,15 @@ def load_hermes_plugin_config_from(path: str, plugin_name: str) -> dict[str, Jso
     except (OSError, UnicodeDecodeError):
         return {}
     parsed = _load_yaml(document)
+    nested_config = _plugin_entry_config(parsed, plugin_name)
+    if nested_config:
+        return nested_config
+    return _top_level_tokenjuice_config(parsed)
+
+
+def _plugin_entry_config(
+    parsed: dict[str, JsonValue], plugin_name: str
+) -> dict[str, JsonValue]:
     plugins = _as_json_object(parsed.get("plugins"))
     if plugins is None:
         return {}
@@ -49,6 +59,14 @@ def load_hermes_plugin_config_from(path: str, plugin_name: str) -> dict[str, Jso
         return {}
     config = _as_json_object(plugin_entry.get("config"))
     return {} if config is None else config
+
+
+def _top_level_tokenjuice_config(parsed: dict[str, JsonValue]) -> dict[str, JsonValue]:
+    return {
+        key: value
+        for key, value in parsed.items()
+        if key.startswith(_TOKENJUICE_PREFIX)
+    }
 
 
 def _as_json_object(value: JsonValue | None) -> dict[str, JsonValue] | None:
