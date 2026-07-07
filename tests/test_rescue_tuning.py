@@ -148,3 +148,64 @@ def test_per_tool_threshold_does_not_affect_exact_protected_outputs() -> None:
 
     # Then: exact file reads remain protected and unchanged.
     assert result is None
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "field_name"),
+    [("terminal", "stdout"), ("execute_code", "output")],
+)
+def test_configured_terminal_tools_rescue_before_compaction(
+    tmp_path: Path,
+    tool_name: str,
+    field_name: str,
+) -> None:
+    # Given: the agent's large terminal-like output is explicitly rescue-eligible at 2500 chars.
+    content = "\n".join(f"agent-output-line-{line:03d}" for line in range(140))
+    original = json.dumps({field_name: content})
+
+    # When: the terminal-like result is transformed below the global rescue threshold.
+    result = transform_tool_result(
+        original,
+        tool_name=tool_name,
+        session_id="session-a",
+        tokenjuice_rescue_store_path=str(tmp_path),
+        tokenjuice_rescue_fetch_available=True,
+        tokenjuice_rescue_min_text_chars=4_000,
+        tokenjuice_rescue_tool_names="web_search,mcp_tool,browser_snapshot,terminal,execute_code",
+        tokenjuice_rescue_tool_min_text_chars="terminal=2500,execute_code=2500",
+    )
+
+    # Then: rescue creates a fetchable handle and clearly marks the inline text as a preview.
+    assert result is not None
+    assert extract_hex_handle(result) is not None
+    assert "tool result rescued" in result
+    assert "Preview only" in result
+
+
+def test_registered_transform_uses_persistent_rescue_config(tmp_path: Path) -> None:
+    # Given: the host config persistently enables terminal rescue at 2500 chars.
+    host = ToolHost()
+    host.config = {
+        "tokenjuice_rescue_store_path": str(tmp_path),
+        "tokenjuice_rescue_min_text_chars": 4_000,
+        "tokenjuice_rescue_tool_names": (
+            "web_search,mcp_tool,browser_snapshot,terminal,execute_code"
+        ),
+        "tokenjuice_rescue_tool_min_text_chars": "terminal=2500,execute_code=2500",
+        "tokenjuice_passref_enabled": False,
+    }
+    register(host)
+    transform = host.callbacks["transform_tool_result"]
+    content = "\n".join(f"agent-terminal-line-{line:03d}" for line in range(140))
+
+    # When: Hermes invokes the registered hook without repeating config kwargs.
+    result = transform(
+        json.dumps({"stdout": content}),
+        tool_name="terminal",
+        session_id="session-a",
+    )
+
+    # Then: the persistent config is enough to produce a fetchable rescue handle.
+    assert result is not None
+    assert "tool result rescued" in result
+    assert extract_hex_handle(result) is not None

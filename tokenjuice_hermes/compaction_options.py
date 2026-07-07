@@ -33,6 +33,18 @@ OPTION_KEYS: Final[frozenset[str]] = frozenset(
         "tokenjuice_rescue_tool_names",
         "tokenjuice_rescue_excluded_tools",
         "tokenjuice_rescue_text_fields",
+        "tokenjuice_rescue_ttl_hours",
+        "tokenjuice_rescue_tombstone_ttl_hours",
+        "tokenjuice_rescue_max_store_mb",
+        "tokenjuice_rescue_fetch_max_chars",
+        "tokenjuice_rescue_full_fetch_max_chars",
+        "tokenjuice_rescue_refuse_full_fetch",
+        "tokenjuice_rescue_grep_max_pattern_len",
+        "tokenjuice_rescue_grep_max_line_len",
+        "tokenjuice_rescue_grep_timeout_ms",
+        "tokenjuice_passref_enabled",
+        "tokenjuice_passref_max_chars",
+        "tokenjuice_passref_total_max_chars",
     }
 )
 

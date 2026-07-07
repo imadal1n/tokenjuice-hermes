@@ -50,6 +50,13 @@ def transform_tool_result(
     if options is None:
         return None
 
+    rescue_options = parse_rescue_options(kwargs)
+    if rescue_options is not None and tool_name in supported_tool_names(options):
+        rescued = transform_rescue_result(result, tool_name, rescue_options)
+        if rescued is not None:
+            record_rescue(max(0, len(result) - len(rescued)))
+            return rescued
+
     # Terminal compaction path.
     if tool_name in supported_tool_names(options):
         compacted = _transform_terminal_path(result, options)
@@ -58,7 +65,6 @@ def transform_tool_result(
         return compacted
 
     # Additive rescue path for eligible web/MCP/browser tools.
-    rescue_options = parse_rescue_options(kwargs)
     if rescue_options is None:
         return None
     rescued = transform_rescue_result(result, tool_name, rescue_options)

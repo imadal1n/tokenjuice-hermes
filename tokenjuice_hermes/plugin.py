@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Protocol, TypeAlias, cast
+from typing import Protocol, TypeAlias, TypeGuard, cast
 
 from .compaction import transform_tool_result
 from .json_types import JsonScalar, JsonValue
@@ -27,6 +27,7 @@ class HookRegistrar(Protocol):
 def register(ctx: HookRegistrar) -> None:
     raw_config: object = getattr(ctx, "config", None) or {}
     config: dict[str, object] = cast("dict[str, object]", raw_config)
+    hook_config = _flat_json_config(config)
 
     _ = _try_register_named_middleware(ctx, "llm_request", prune_llm_request)
 
@@ -42,8 +43,9 @@ def register(ctx: HookRegistrar) -> None:
             tool_name: str = "",
             **kwargs: JsonScalar,
         ) -> str | None:
-            _ = kwargs.setdefault("tokenjuice_rescue_fetch_available", True)
-            return transform_tool_result(result, tool_name=tool_name, **kwargs)
+            merged_kwargs = {**hook_config, **kwargs}
+            _ = merged_kwargs.setdefault("tokenjuice_rescue_fetch_available", True)
+            return transform_tool_result(result, tool_name=tool_name, **merged_kwargs)
 
         ctx.register_hook("transform_tool_result", _transform)
     else:
@@ -63,6 +65,14 @@ def _try_register_named_middleware(
     except Exception:  # noqa: BLE001 - middleware registration is optional; failures degrade gracefully
         return False
     return True
+
+
+def _flat_json_config(config: dict[str, object]) -> dict[str, JsonScalar]:
+    return {key: value for key, value in config.items() if _is_json_scalar(value)}
+
+
+def _is_json_scalar(value: object) -> TypeGuard[JsonScalar]:
+    return value is None or isinstance(value, str | int | float | bool)
 
 
 def _try_register_passref_middleware(
