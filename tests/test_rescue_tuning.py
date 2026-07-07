@@ -1,0 +1,150 @@
+from __future__ import annotations
+
+import json
+from typing import TYPE_CHECKING
+
+import pytest
+
+from tests.host_fixtures import ToolHost, big_web_content, extract_hex_handle, web_result
+from tokenjuice_hermes.compaction import transform_tool_result
+from tokenjuice_hermes.plugin import register
+from tokenjuice_hermes.rescue_store import BlobStore
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+
+@pytest.fixture
+def tmp_store(tmp_path: Path) -> BlobStore:
+    return BlobStore({"store_path": str(tmp_path)})
+
+
+def test_per_tool_threshold_applies_different_limits(tmp_path: Path) -> None:
+    # Given: oversized web_search and browser_snapshot results with per-tool thresholds.
+    web_content = "x" * 3_000
+    browser_content = "y" * 3_000
+    kwargs = {
+        "tokenjuice_rescue_store_path": str(tmp_path),
+        "tokenjuice_rescue_fetch_available": True,
+        "tokenjuice_rescue_tool_min_text_chars": "web_search=2000,browser_snapshot=5000",
+    }
+
+    # When: both tools are transformed with the same session.
+    web_result_text = transform_tool_result(
+        web_result(web_content),
+        tool_name="web_search",
+        session_id="session-a",
+        **kwargs,
+    )
+    browser_result_text = transform_tool_result(
+        json.dumps({"snapshot": browser_content}),
+        tool_name="browser_snapshot",
+        session_id="session-a",
+        **kwargs,
+    )
+
+    # Then: web_search is rescued (3000 >= 2000) but browser_snapshot is not (3000 < 5000).
+    assert web_result_text is not None
+    assert extract_hex_handle(web_result_text) is not None
+    assert browser_result_text is None
+
+
+def test_per_tool_threshold_falls_back_to_global(tmp_path: Path) -> None:
+    # Given: a web_search result and a per-tool threshold only for mcp_tool.
+    content = "x" * 3_000
+    kwargs = {
+        "tokenjuice_rescue_store_path": str(tmp_path),
+        "tokenjuice_rescue_fetch_available": True,
+        "tokenjuice_rescue_min_text_chars": 2_500,
+        "tokenjuice_rescue_tool_min_text_chars": "mcp_tool=5000",
+    }
+
+    # When: web_search is transformed.
+    result = transform_tool_result(
+        web_result(content),
+        tool_name="web_search",
+        session_id="session-a",
+        **kwargs,
+    )
+
+    # Then: web_search uses the global threshold (3000 >= 2500) and is rescued.
+    assert result is not None
+    assert extract_hex_handle(result) is not None
+
+
+def test_malformed_per_tool_threshold_fails_open(tmp_path: Path) -> None:
+    # Given: an oversized web_search result with a malformed per-tool threshold string.
+    original = web_result(big_web_content())
+    kwargs = {
+        "tokenjuice_rescue_store_path": str(tmp_path),
+        "tokenjuice_rescue_fetch_available": True,
+        "tokenjuice_rescue_tool_min_text_chars": "web_search=not_a_number",
+    }
+
+    # When: the plugin transforms the result.
+    result = transform_tool_result(
+        original,
+        tool_name="web_search",
+        session_id="session-a",
+        **kwargs,
+    )
+
+    # Then: malformed config fails open: no replacement and no dead handle.
+    assert result is None or result == original
+    if result is not None:
+        assert extract_hex_handle(result) is None
+
+
+def test_full_fetch_refusal_names_config_keys_and_safe_alternatives(
+    tmp_path: Path,
+) -> None:
+    # Given: a rescued blob larger than the full-fetch cap with refusal enabled.
+    host = ToolHost()
+    host.config = {
+        "tokenjuice_rescue_store_path": str(tmp_path),
+        "tokenjuice_rescue_full_fetch_max_chars": 100,
+        "tokenjuice_rescue_refuse_full_fetch": True,
+    }
+    register(host)
+    transform = host.callbacks["transform_tool_result"]
+    content = "line " * 1_200  # rescued (over default threshold) and over the full cap
+    result = transform(
+        web_result(content),
+        tool_name="web_search",
+        session_id="session-a",
+        tokenjuice_rescue_store_path=str(tmp_path),
+    )
+    handle = extract_hex_handle(result or "")
+    assert handle
+
+    fetch = host.tools["rescuer_fetch"]
+    refusal = fetch(args={"id": handle, "mode": "full"}, session_id="session-a")
+    assert isinstance(refusal, str)
+
+    # Then: the refusal names the config keys and gives exact safe alternatives.
+    lowered = refusal.lower()
+    assert "tokenjuice_rescue_full_fetch_max_chars" in lowered
+    assert "tokenjuice_rescue_refuse_full_fetch" in lowered
+    assert "mode='range'" in lowered or 'mode="range"' in lowered
+    assert "start" in lowered
+    assert "count" in lowered
+    assert "mode='grep'" in lowered or 'mode="grep"' in lowered
+    assert "pattern" in lowered
+
+
+def test_per_tool_threshold_does_not_affect_exact_protected_outputs() -> None:
+    # Given: a large read_file payload with per-tool thresholds that might rescue it.
+    original = json.dumps({"content": big_web_content()})
+
+    # When: read_file is transformed with aggressive per-tool thresholds.
+    result = transform_tool_result(
+        original,
+        tool_name="read_file",
+        session_id="session-a",
+        tokenjuice_rescue_store_path="/ignored",
+        tokenjuice_rescue_fetch_available=True,
+        tokenjuice_rescue_tool_min_text_chars="read_file=1",
+    )
+
+    # Then: exact file reads remain protected and unchanged.
+    assert result is None

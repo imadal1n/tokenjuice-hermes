@@ -249,7 +249,10 @@ class BlobStore:
         if self.cfg.get("refuse_full_fetch", DEFAULT_REFUSE_FULL_FETCH) and len(text) > cap:
             return (
                 f"Refused: blob is {len(text):,} chars, over the "
-                f"{cap:,} char full-fetch limit. Use mode='range' instead."
+                f"tokenjuice_rescue_full_fetch_max_chars={cap:,} limit "
+                "(tokenjuice_rescue_refuse_full_fetch=True). "
+                "Use mode='range' with start/count, e.g. start=0,count=20, "
+                "or mode='grep' with a literal pattern."
             )
         return text
 

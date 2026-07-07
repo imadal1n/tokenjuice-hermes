@@ -7,7 +7,7 @@ terminal-like compaction behavior.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final
 
@@ -34,6 +34,7 @@ class RescueOptions:
     store_path: str = ""
     fetch_available: bool = True
     min_text_chars: int = MIN_TEXT_CHARS
+    tool_min_text_chars: dict[str, int] = field(default_factory=dict)
     tool_names: frozenset[str] = RESCUE_TOOL_NAMES
     excluded_tools: frozenset[str] = frozenset()
     text_fields: tuple[str, ...] = RESCUE_TEXT_FIELDS
@@ -53,7 +54,7 @@ def transform_rescue_result(
     if not Path(store_path).exists():
         return None
 
-    oversized = _find_oversized_field(parsed, options)
+    oversized = _find_oversized_field(parsed, tool_name, options)
     if oversized is None:
         return None
     _field, text = oversized
@@ -102,6 +103,9 @@ def parse_rescue_options(kwargs: dict[str, JsonScalar]) -> RescueOptions | None:
     min_text_chars = _nonnegative_int_arg(
         kwargs.get("tokenjuice_rescue_min_text_chars"), default=MIN_TEXT_CHARS
     )
+    tool_min_text_chars = _tool_threshold_map_arg(
+        kwargs.get("tokenjuice_rescue_tool_min_text_chars"), default={}
+    )
     tool_names = _str_set_arg(kwargs.get("tokenjuice_rescue_tool_names"), default=RESCUE_TOOL_NAMES)
     excluded_tools = _str_set_arg(
         kwargs.get("tokenjuice_rescue_excluded_tools"), default=frozenset()
@@ -113,6 +117,7 @@ def parse_rescue_options(kwargs: dict[str, JsonScalar]) -> RescueOptions | None:
     if (
         fetch_available is None
         or min_text_chars is None
+        or tool_min_text_chars is None
         or tool_names is None
         or excluded_tools is None
         or text_fields is None
@@ -124,6 +129,7 @@ def parse_rescue_options(kwargs: dict[str, JsonScalar]) -> RescueOptions | None:
         store_path=store_path,
         fetch_available=fetch_available,
         min_text_chars=min_text_chars,
+        tool_min_text_chars=tool_min_text_chars,
         tool_names=tool_names,
         excluded_tools=excluded_tools,
         text_fields=text_fields,
@@ -132,12 +138,14 @@ def parse_rescue_options(kwargs: dict[str, JsonScalar]) -> RescueOptions | None:
 
 def _find_oversized_field(
     parsed: FlatJsonObject,
+    tool_name: str,
     options: RescueOptions,
 ) -> tuple[str, str] | None:
-    for field in options.text_fields:
-        value = parsed.get(field)
-        if isinstance(value, str) and len(value) >= options.min_text_chars:
-            return field, value
+    threshold = options.tool_min_text_chars.get(tool_name, options.min_text_chars)
+    for field_name in options.text_fields:
+        value = parsed.get(field_name)
+        if isinstance(value, str) and len(value) >= threshold:
+            return field_name, value
     return None
 
 
@@ -183,3 +191,36 @@ def _str_tuple_arg(value: JsonScalar, *, default: tuple[str, ...]) -> tuple[str,
     if not isinstance(value, str):
         return None
     return _split_csv(value)
+
+
+def _tool_threshold_map_arg(value: JsonScalar, *, default: dict[str, int]) -> dict[str, int] | None:
+    """Parse a comma-separated `tool=threshold` map, returning None if malformed."""
+    if value is None:
+        return default
+    if not isinstance(value, str):
+        return None
+    result: dict[str, int] = {}
+    for item in _split_csv(value):
+        parsed = _parse_threshold_item(item)
+        if parsed is None:
+            return None
+        tool, threshold = parsed
+        result[tool] = threshold
+    return result
+
+
+def _parse_threshold_item(item: str) -> tuple[str, int] | None:
+    """Parse a single `tool=threshold` pair, returning None if malformed."""
+    if "=" not in item:
+        return None
+    tool_part, _, threshold_part = item.partition("=")
+    tool = tool_part.strip()
+    if not tool:
+        return None
+    try:
+        threshold = int(threshold_part.strip())
+    except ValueError:
+        return None
+    if threshold < 0:
+        return None
+    return tool, threshold

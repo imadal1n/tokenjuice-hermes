@@ -29,6 +29,7 @@ OPTION_KEYS: Final[frozenset[str]] = frozenset(
         "tokenjuice_rescue_store_path",
         "tokenjuice_rescue_fetch_available",
         "tokenjuice_rescue_min_text_chars",
+        "tokenjuice_rescue_tool_min_text_chars",
         "tokenjuice_rescue_tool_names",
         "tokenjuice_rescue_excluded_tools",
         "tokenjuice_rescue_text_fields",
