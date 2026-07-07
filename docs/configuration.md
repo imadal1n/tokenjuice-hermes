@@ -114,6 +114,7 @@ $HERMES_HOME/plugins/tokenjuice-hermes/
   __init__.py
   compaction.py
   compaction_options.py
+  hermes_config.py
   json_types.py
   passref.py
   plugin.py
