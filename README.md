@@ -16,7 +16,8 @@ registration hooks.
 - Prunes older terminal-like results in outbound `llm_request` payloads when
   request history is under context pressure.
 - Rescues oversized web/MCP/browser results into a session-scoped blob store and
-  emits a preview plus an opaque `rescuer_fetch` handle.
+  emits a preview plus an opaque `rescuer_fetch` handle. Deployment profiles can
+  also opt terminal-like tools into rescue before omitted-middle compaction.
 - Optionally expands rescued handles inside later tool requests through passref.
   Passref is disabled by default and requires an explicit allowlist.
 - Exposes a read-only `tokenjuice_status` tool that returns aggregate counters
