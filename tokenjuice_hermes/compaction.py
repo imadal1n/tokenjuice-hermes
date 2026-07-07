@@ -20,6 +20,7 @@ from .json_types import (
     is_error_payload,
     parse_flat_json_object,
 )
+from .observability import record_compaction, record_rescue
 from .rescue_transform import parse_rescue_options, transform_rescue_result
 
 EMBEDDED_DIAGNOSTIC_MARKERS: Final[tuple[str, ...]] = (
@@ -51,13 +52,19 @@ def transform_tool_result(
 
     # Terminal compaction path.
     if tool_name in supported_tool_names(options):
-        return _transform_terminal_path(result, options)
+        compacted = _transform_terminal_path(result, options)
+        if compacted is not None and options.mode == CompactionMode.HEAD_TAIL:
+            record_compaction(max(0, len(result) - len(compacted)))
+        return compacted
 
     # Additive rescue path for eligible web/MCP/browser tools.
     rescue_options = parse_rescue_options(kwargs)
     if rescue_options is None:
         return None
-    return transform_rescue_result(result, tool_name, rescue_options)
+    rescued = transform_rescue_result(result, tool_name, rescue_options)
+    if rescued is not None:
+        record_rescue(max(0, len(result) - len(rescued)))
+    return rescued
 
 
 def _transform_terminal_path(

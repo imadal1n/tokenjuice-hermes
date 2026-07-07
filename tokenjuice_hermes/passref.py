@@ -5,6 +5,13 @@ from collections.abc import Callable, Mapping
 from typing import ClassVar, Final, Protocol, TypeAlias, cast
 
 from .json_types import JsonValue
+from .observability import (
+    record_passref_budget_exceeded,
+    record_passref_denial,
+    record_passref_enabled,
+    record_passref_expansion,
+    record_passref_truncation,
+)
 
 
 class RescueStore(Protocol):
@@ -46,11 +53,18 @@ _SINK_TOOLS: Final[frozenset[str]] = frozenset(
 
 
 class _Budget:
-    __slots__: ClassVar[tuple[str, ...]] = ("changed", "total")
+    __slots__: ClassVar[tuple[str, ...]] = (
+        "budget_exceeded",
+        "changed",
+        "total",
+        "truncated",
+    )
 
     def __init__(self) -> None:
         self.total: int = 0
         self.changed: bool = False
+        self.truncated: bool = False
+        self.budget_exceeded: bool = False
 
 
 class _PassrefConfig:
@@ -178,6 +192,7 @@ def make_passref_middleware(
     config: Mapping[str, object],
 ) -> ToolRequestCallback:
     cfg = _PassrefConfig.from_mapping(config)
+    record_passref_enabled(enabled=cfg.enabled)
 
     def _tool_request(
         *,
@@ -205,8 +220,10 @@ def _tool_request_impl(
     if _is_hard_exempt(tool_name):
         return None
     if not _tool_allowed(tool_name, cfg):
+        record_passref_denial()
         return _maybe_deny_args(args, _tool_denial_marker(tool_name))
     if not isinstance(session_id, str) or not session_id:
+        record_passref_denial()
         return _maybe_deny_args(args, _session_required_marker())
     return _expand_with_store(get_store, cfg, args, session_id)
 
@@ -224,6 +241,11 @@ def _expand_with_store(
     expanded = _expand_value(args, store, cfg, budget, session_id)
     if not budget.changed:
         return None
+    record_passref_expansion(budget.total)
+    if budget.truncated:
+        record_passref_truncation()
+    if budget.budget_exceeded:
+        record_passref_budget_exceeded()
     return {"args": expanded}
 
 
@@ -259,6 +281,7 @@ def _expand_string(
     def _replace(match: re.Match[str]) -> str:
         blob_id = match.group(1)
         if budget.total >= cfg.total_max_chars:
+            budget.budget_exceeded = True
             return _budget_marker(cfg.total_max_chars)
         if not store.session_references(blob_id, session_id):
             if not store.has_blob(blob_id):
@@ -271,6 +294,7 @@ def _expand_string(
         cap = min(cfg.max_chars, remaining)
         if len(content) > cap:
             content = content[:cap] + _truncation_marker(len(content), cap)
+            budget.truncated = True
         budget.total += len(content)
         return content
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .observability import record_fetch
 from .rescue_grep import grep_text
 from .rescue_store import BlobStore
 
@@ -17,6 +18,8 @@ _CONFIG_KEY_MAP: dict[str, str] = {
     "tokenjuice_rescue_grep_max_line_len": "grep_max_line_len",
     "tokenjuice_rescue_grep_timeout_ms": "grep_timeout_ms",
 }
+
+_KNOWN_FETCH_MODES: frozenset[str] = frozenset({"stat", "range", "grep", "full"})
 
 
 def rescuer_fetch(
@@ -41,6 +44,9 @@ def rescuer_fetch(
         return "Error: id must be a string"
     if not isinstance(mode, str):
         return "Error: mode must be a string"
+
+    record_mode = mode if mode in _KNOWN_FETCH_MODES else "invalid"
+    record_fetch(record_mode)
 
     if mode == "grep":
         return _run_grep(store, handle, args, session_id, normalized)

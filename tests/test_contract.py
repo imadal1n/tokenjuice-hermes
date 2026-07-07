@@ -193,6 +193,7 @@ def test_installed_directory_plugin_layout_imports(tmp_path: Path) -> None:
         "compaction.py",
         "compaction_options.py",
         "json_types.py",
+        "observability.py",
         "passref.py",
         "plugin.py",
         "plugin.yaml",

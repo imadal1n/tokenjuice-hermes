@@ -5,6 +5,7 @@ from typing import Protocol, TypeAlias, cast
 
 from .compaction import transform_tool_result
 from .json_types import JsonScalar, JsonValue
+from .observability import tokenjuice_status
 from .passref import make_passref_middleware
 from .request_pruning import prune_llm_request
 from .rescue_fetch import rescuer_fetch
@@ -31,6 +32,7 @@ def register(ctx: HookRegistrar) -> None:
 
     fetch_available = _try_register_fetch_tool(ctx, config)
     _ = _try_register_passref_middleware(ctx, config)
+    _ = _try_register_status_tool(ctx, config)
 
     if fetch_available:
 
@@ -108,5 +110,26 @@ def _try_register_fetch_tool(
     try:
         _ = register_tool("rescuer_fetch", _fetch_tool)
     except Exception:  # noqa: BLE001 - tool registration is optional; failures degrade gracefully
+        return False
+    return True
+
+
+def _try_register_status_tool(
+    ctx: HookRegistrar,
+    config: dict[str, object],
+) -> bool:
+    register_tool = getattr(ctx, "register_tool", None)
+    if not callable(register_tool):
+        return False
+
+    store_path = _rescue_store_path(config)
+
+    def _status_tool(args: dict[str, object], session_id: str = "") -> str:
+        _ = session_id
+        return tokenjuice_status(args, store_path=store_path)
+
+    try:
+        _ = register_tool("tokenjuice_status", _status_tool)
+    except Exception:  # noqa: BLE001 - status tool registration is optional; failures degrade gracefully
         return False
     return True
