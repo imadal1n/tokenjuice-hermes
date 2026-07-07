@@ -27,10 +27,10 @@ class HookRegistrar(Protocol):
 
 def register(ctx: HookRegistrar) -> None:
     raw_config: object = getattr(ctx, "config", None)
-    if raw_config is None:
-        raw_config = load_hermes_plugin_config()
-    raw_config = raw_config or {}
+    raw_config = raw_config or load_hermes_plugin_config()
     config: dict[str, object] = cast("dict[str, object]", raw_config)
+    if not _has_tokenjuice_config(config):
+        config = cast("dict[str, object]", load_hermes_plugin_config())
     hook_config = _flat_json_config(config)
 
     _ = _try_register_named_middleware(ctx, "llm_request", prune_llm_request)
@@ -73,6 +73,10 @@ def _try_register_named_middleware(
 
 def _flat_json_config(config: dict[str, object]) -> dict[str, JsonScalar]:
     return {key: value for key, value in config.items() if _is_json_scalar(value)}
+
+
+def _has_tokenjuice_config(config: dict[str, object]) -> bool:
+    return any(key.startswith("tokenjuice_") for key in config)
 
 
 def _is_json_scalar(value: object) -> TypeGuard[JsonScalar]:
