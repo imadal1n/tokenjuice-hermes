@@ -98,3 +98,37 @@ Passref is disabled by default. When enabled, it still requires:
 
 Denied, missing, cross-session, no-session, and truncated expansions return clear
 markers. `read_file` and `diagnostics` are hard-exempt.
+
+## Observability and `tokenjuice_status`
+
+When the host exposes `register_tool`, the plugin registers a read-only
+`tokenjuice_status` tool. The response is a JSON object with aggregate counters
+and store statistics. Counters are kept in memory for the process lifetime only;
+store statistics are computed on demand by scanning the rescue store directories
+without creating them.
+
+Status fields include:
+
+| Field | Meaning |
+|---|---|
+| `version` | Plugin version. |
+| `passref_enabled` | Whether passref expansion is enabled in this process. |
+| `compaction_count` | Number of terminal-like results compacted. |
+| `compaction_chars_saved` | Estimated chars removed by compaction. |
+| `rescue_count` | Number of oversized results rescued. |
+| `rescue_chars_saved` | Estimated chars removed by rescue. |
+| `fetch_count` | Number of `rescuer_fetch` invocations. |
+| `fetch_modes` | Counts per mode (`stat`, `range`, `grep`, `full`, `invalid`). |
+| `passref_expansion_count` | Number of passref expansions performed. |
+| `passref_denied_count` | Number of passref requests denied. |
+| `passref_truncated_count` | Number of expansions truncated to a budget. |
+| `passref_budget_exceeded_count` | Number of calls that hit the total budget marker. |
+| `passref_chars_expanded` | Total chars inserted by passref. |
+| `store.live_blob_count` | Live blobs across all session indexes. |
+| `store.tombstone_count` | Swept blobs kept as tombstones. |
+| `store.total_blob_bytes` | Total bytes of blob files on disk. |
+| `store.blob_file_count` | Number of blob files on disk. |
+
+`tokenjuice_status` never returns raw blob content, raw session IDs, per-session
+rows, secrets, transcript snippets, or private paths. Unknown `rescuer_fetch`
+modes are counted as `invalid` rather than creating new buckets.

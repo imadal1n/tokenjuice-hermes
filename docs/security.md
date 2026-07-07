@@ -12,6 +12,9 @@
   allowlist.
 - Unauthorized passref expansion returns explicit markers instead of silently
   passing raw handles to tools.
+- `tokenjuice_status` is aggregate-only and redacted. It never returns raw blob
+  content, raw session IDs, per-session rows, secrets, transcript snippets, or
+  private paths. Counters are in-memory for the process lifetime only.
 
 ## Sink-Denied Tools
 
@@ -53,6 +56,9 @@ These names are never passref-expanded, even if listed in the allowlist:
 - Rewriting exact file-content reads.
 - Making `read_file` configurable or compactable.
 - Vendoring Toolaria or depending on it at runtime.
+- Sending synthetic messages through the agent, chat channel, chat channel, or any real chat
+  channel as a proof step.
+- Writing to the live rescue store during runtime smoke or verification.
 
 Deployment wrappers should keep activation, passref enablement, and allowlist
 population as separate operator decisions.

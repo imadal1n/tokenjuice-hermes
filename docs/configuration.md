@@ -26,6 +26,7 @@ the result unchanged.
 |---|---:|---|
 | `tokenjuice_rescue_store_path` | `/opt/data/tokenjuice-hermes/rescue-blobs` | Base directory for the blob store. |
 | `tokenjuice_rescue_min_text_chars` | `4000` | Minimum text length to trigger rescue. |
+| `tokenjuice_rescue_tool_min_text_chars` | empty | Per-tool rescue threshold overrides as comma-separated `tool=threshold` pairs (e.g. `web_search=2000,browser_snapshot=8000`). Tools not listed fall back to `tokenjuice_rescue_min_text_chars`. Malformed maps fail open and disable rescue rather than producing dead handles. |
 | `tokenjuice_rescue_tool_names` | `web_search,mcp_tool,browser_snapshot` | Comma-separated eligible rescue tools. |
 | `tokenjuice_rescue_excluded_tools` | empty | Comma-separated tools to exclude from rescue. |
 | `tokenjuice_rescue_text_fields` | `content,results,snapshot,output,stdout` | Comma-separated fields to inspect. |
@@ -36,6 +37,11 @@ the result unchanged.
 | `tokenjuice_rescue_fetch_max_chars` | `4000` | Maximum chars returned by `range` mode. |
 | `tokenjuice_rescue_full_fetch_max_chars` | `50000` | Maximum chars for `full` mode. |
 | `tokenjuice_rescue_refuse_full_fetch` | `true` | Refuse `full` requests over the cap. |
+
+When `tokenjuice_rescue_refuse_full_fetch` is `true` and a `mode='full'` request
+exceeds `tokenjuice_rescue_full_fetch_max_chars`, the refusal names both config
+keys and suggests exact safe alternatives: `mode='range'` with `start`/`count`,
+or `mode='grep'` with a literal `pattern`.
 
 ## Passref Kwargs
 
@@ -48,6 +54,15 @@ the result unchanged.
 
 Passref never expands without an explicit allowlist, and sink tools remain denied
 even if listed.
+
+## Status Tool
+
+`tokenjuice_status` is registered automatically when the host exposes
+`register_tool`. It accepts no arguments and returns a JSON string with aggregate
+counters and store statistics. The tool is read-only and never returns raw blob
+content, raw session IDs, per-session rows, secrets, transcript snippets, or
+private paths. Counters are in-memory for the process lifetime only; store
+statistics are computed on demand.
 
 ## Store Layout
 
@@ -62,6 +77,18 @@ The rescue store keeps content and indexes under `tokenjuice_rescue_store_path`:
 Writes are atomic. `lazy_sweep` tombstones expired blobs, removes unreferenced
 content, and enforces the size cap by deleting oldest content first. Tombstones
 remain for the secondary TTL so fetch can return a clear swept marker.
+
+The `tokenjuice_status` store report contains:
+
+| Field | Meaning |
+|---|---|
+| `live_blob_count` | Live blobs across all session indexes. |
+| `tombstone_count` | Swept blobs kept as tombstones. |
+| `total_blob_bytes` | Total bytes of blob files on disk. |
+| `blob_file_count` | Number of blob files on disk. |
+
+These values are aggregate and computed on demand; they do not change GC/sweep
+policy.
 
 ## Hermes Plugin Layout
 
@@ -90,6 +117,23 @@ $HERMES_HOME/plugins/tokenjuice-hermes/
 ```
 
 The plugin uses only the Python standard library at runtime.
+
+## Runtime Smoke
+
+`scripts/runtime_smoke.py` is a post-`rebuild` operator verification script. It loads
+the mounted plugin from `/opt/data/plugins/tokenjuice-hermes` (override with
+`TOKENJUICE_SMOKE_PLUGIN_PATH`), verifies that `register()` is callable, creates
+a temporary throwaway `BlobStore`, exercises rescue/fetch/status through the
+plugin, and removes the temporary store.
+
+The smoke script:
+
+- uses a temporary directory, never `/opt/data/tokenjuice-hermes/rescue-blobs`;
+- does not send messages to the agent, chat channel, chat channel, or any real chat channel;
+- does not read secrets, edit live config, or mutate live store contents;
+- prints only safe booleans and aggregate counts.
+
+It is not a substitute for unit tests or source-level safety checks.
 
 ## Deployment Boundary
 

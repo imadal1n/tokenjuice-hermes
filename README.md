@@ -6,7 +6,8 @@ out of model context without losing recoverability.
 ## Status
 
 Alpha. Requires a Hermes runtime with `transform_tool_result`; request pruning,
-fetch, and passref activate only when the host exposes their registration hooks.
+fetch, passref, and `tokenjuice_status` activate only when the host exposes their
+registration hooks.
 
 ## Behavior
 
@@ -18,18 +19,21 @@ fetch, and passref activate only when the host exposes their registration hooks.
   emits a preview plus an opaque `rescuer_fetch` handle.
 - Optionally expands rescued handles inside later tool requests through passref.
   Passref is disabled by default and requires an explicit allowlist.
+- Exposes a read-only `tokenjuice_status` tool that returns aggregate counters
+  and store statistics. It never returns raw blob content, raw session IDs,
+  per-session rows, secrets, transcript snippets, or private paths.
 - Keeps `read_file`, diagnostics, `stderr`, traceback-bearing output, malformed
   inputs, unsupported tools, missing sessions, and missing stores exact or
   unchanged.
 
 ## Documentation
 
-- [Behavior](docs/behavior.md): compaction, request pruning, rescue/fetch, and
-  passref behavior.
+- [Behavior](docs/behavior.md): compaction, request pruning, rescue/fetch,
+  passref, status, and cleanup behavior.
 - [Configuration](docs/configuration.md): kwargs, plugin layout, store lifecycle,
-  and deployment boundaries.
+  thresholds, and deployment boundaries.
 - [Security](docs/security.md): exactness guarantees, session isolation, sink
-  protections, and non-goals.
+  protections, status redaction, and non-goals.
 
 ## Install
 
@@ -55,6 +59,7 @@ $HERMES_HOME/plugins/tokenjuice-hermes/
   compaction.py
   compaction_options.py
   json_types.py
+  observability.py
   passref.py
   plugin.py
   plugin.yaml
@@ -99,6 +104,20 @@ uv build
 
 The standalone repository also includes a GitHub Actions workflow that runs the
 same checks on Python 3.11, 3.12, and 3.13.
+
+## Runtime Smoke
+
+After the host is rebuilt, `scripts/runtime_smoke.py` can prove the mounted
+plugin loads and exercises rescue/fetch/status through a temporary throwaway
+store. It never sends messages to the agent/chat channel, writes to the live rescue store,
+or reads secrets. Output is limited to safe booleans and aggregate counts.
+
+```bash
+docker exec -i -u 1000:100 <hermes-container> python < scripts/runtime_smoke.py
+```
+
+The smoke script is a post-`rebuild` operator verification step, not a substitute for
+unit tests or source-level safety checks.
 
 ## Non-Goals
 
