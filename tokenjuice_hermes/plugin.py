@@ -15,6 +15,24 @@ from .rescue_types import RESCUE_STORE_PATH_DEFAULT
 
 HookCallback: TypeAlias = Callable[..., str | None]
 MiddlewareCallback: TypeAlias = Callable[..., dict[str, JsonValue] | str | None]
+ToolHandler: TypeAlias = Callable[..., str]
+
+_TOOLSET: str = "tokenjuice-hermes"
+_FETCH_TOOL_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "string"},
+        "mode": {"type": "string", "enum": ["stat", "range", "grep", "full"]},
+        "start": {"type": "integer"},
+        "count": {"type": "integer"},
+        "pattern": {"type": "string"},
+    },
+    "required": ["id", "mode"],
+}
+_STATUS_TOOL_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "properties": {},
+}
 
 
 class HookRegistrar(Protocol):
@@ -125,8 +143,41 @@ def _try_register_fetch_tool(
     def _fetch_tool(args: dict[str, object], session_id: str = "") -> str:
         return rescuer_fetch(args, session_id=session_id, config=config)
 
+    return _try_register_tool(
+        ctx,
+        name="rescuer_fetch",
+        schema=_FETCH_TOOL_SCHEMA,
+        handler=_fetch_tool,
+        description="Fetch exact content rescued by tokenjuice-hermes.",
+    )
+
+
+def _try_register_tool(
+    ctx: HookRegistrar,
+    *,
+    name: str,
+    schema: dict[str, object],
+    handler: ToolHandler,
+    description: str,
+) -> bool:
+    register_tool = getattr(ctx, "register_tool", None)
+    if not callable(register_tool):
+        return False
     try:
-        _ = register_tool("rescuer_fetch", _fetch_tool)
+        _ = register_tool(
+            name=name,
+            toolset=_TOOLSET,
+            schema=schema,
+            handler=handler,
+            description=description,
+        )
+    except TypeError:
+        pass
+    else:
+        return True
+
+    try:
+        _ = register_tool(name, handler)
     except Exception:  # noqa: BLE001 - tool registration is optional; failures degrade gracefully
         return False
     return True
@@ -146,8 +197,10 @@ def _try_register_status_tool(
         _ = session_id
         return tokenjuice_status(args, store_path=store_path)
 
-    try:
-        _ = register_tool("tokenjuice_status", _status_tool)
-    except Exception:  # noqa: BLE001 - status tool registration is optional; failures degrade gracefully
-        return False
-    return True
+    return _try_register_tool(
+        ctx,
+        name="tokenjuice_status",
+        schema=_STATUS_TOOL_SCHEMA,
+        handler=_status_tool,
+        description="Return aggregate tokenjuice-hermes rescue status.",
+    )

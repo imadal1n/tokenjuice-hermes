@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 from tests.host_fixtures import (
     FailingToolHost,
+    HermesRegistryHost,
     HookOnlyHost,
     ToolHost,
     big_web_content,
@@ -27,6 +28,20 @@ def test_register_adds_rescuer_fetch_on_tool_host() -> None:
     assert host.hooks == ["transform_tool_result"]
     assert set(host.middlewares) == {"llm_request", "tool_request"}
     assert "rescuer_fetch" in host.tools
+
+
+def test_register_adds_rescuer_fetch_on_hermes_registry_host() -> None:
+    # Given: a host with the real Hermes PluginContext.register_tool shape.
+    host = HermesRegistryHost()
+
+    # When: the plugin registers itself.
+    register(host)
+
+    # Then: fetch and status tools are registered and the transform hook is wrapped.
+    assert host.hooks == ["transform_tool_result"]
+    assert set(host.middlewares) == {"llm_request", "tool_request"}
+    assert "rescuer_fetch" in host.tools
+    assert "tokenjuice_status" in host.tools
 
 
 def test_tool_host_fetch_redeems_stored_blob(tmp_path: Path) -> None:

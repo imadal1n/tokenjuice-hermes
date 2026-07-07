@@ -204,6 +204,34 @@ class HermesHost(_HermesHostBase):
         self.middlewares[name] = callback
 
 
+class HermesRegistryHost(_HermesHostBase):
+    """Hermes host fixture using the real PluginContext.register_tool shape."""
+
+    def register_hook(self, name: str, callback: Callable[..., str | None]) -> None:
+        self.callbacks[name] = callback
+        self.hooks.append(name)
+
+    def register_tool(
+        self,
+        name: str,
+        toolset: str,
+        schema: dict[str, object],
+        handler: ToolCallback,
+        description: str = "",
+    ) -> None:
+        if self._tool_registration_error:
+            raise _ToolRegistrationError
+        _ = toolset
+        _ = schema
+        _ = description
+        self.tools[name] = handler
+
+    def register_middleware(self, name: str, callback: MiddlewareCallback) -> None:
+        if self._middleware_registration_error:
+            raise _MiddlewareRegistrationError
+        self.middlewares[name] = callback
+
+
 class HermesToollessHost(_HermesHostBase):
     """Hermes-like host with hook and middleware surfaces but no tool surface."""
 
