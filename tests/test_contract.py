@@ -192,6 +192,7 @@ def test_installed_directory_plugin_layout_imports(tmp_path: Path) -> None:
         "__init__.py",
         "compaction.py",
         "compaction_options.py",
+        "hermes_config.py",
         "json_types.py",
         "observability.py",
         "passref.py",

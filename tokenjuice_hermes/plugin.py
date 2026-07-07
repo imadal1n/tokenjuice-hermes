@@ -4,6 +4,7 @@ from collections.abc import Callable
 from typing import Protocol, TypeAlias, TypeGuard, cast
 
 from .compaction import transform_tool_result
+from .hermes_config import load_hermes_plugin_config
 from .json_types import JsonScalar, JsonValue
 from .observability import tokenjuice_status
 from .passref import make_passref_middleware
@@ -25,7 +26,10 @@ class HookRegistrar(Protocol):
 
 
 def register(ctx: HookRegistrar) -> None:
-    raw_config: object = getattr(ctx, "config", None) or {}
+    raw_config: object = getattr(ctx, "config", None)
+    if raw_config is None:
+        raw_config = load_hermes_plugin_config()
+    raw_config = raw_config or {}
     config: dict[str, object] = cast("dict[str, object]", raw_config)
     hook_config = _flat_json_config(config)
 
