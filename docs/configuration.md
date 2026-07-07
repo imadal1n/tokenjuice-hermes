@@ -38,6 +38,21 @@ the result unchanged.
 | `tokenjuice_rescue_full_fetch_max_chars` | `50000` | Maximum chars for `full` mode. |
 | `tokenjuice_rescue_refuse_full_fetch` | `true` | Refuse `full` requests over the cap. |
 
+Deployment profiles can opt terminal-like tools into recoverable rescue without
+lowering the global threshold:
+
+```yaml
+tokenjuice_rescue_min_text_chars: 4000
+tokenjuice_rescue_tool_names: web_search,mcp_tool,browser_snapshot,terminal,execute_code
+tokenjuice_rescue_tool_min_text_chars: terminal=2500,execute_code=2500
+tokenjuice_passref_enabled: false
+```
+
+With this shape, `terminal` and `execute_code` outputs at or above 2500 chars are
+stored behind `rescuer_fetch` handles before omitted-middle compaction is used.
+Tools not listed in `tokenjuice_rescue_tool_min_text_chars` still use the global
+`tokenjuice_rescue_min_text_chars` value.
+
 When `tokenjuice_rescue_refuse_full_fetch` is `true` and a `mode='full'` request
 exceeds `tokenjuice_rescue_full_fetch_max_chars`, the refusal names both config
 keys and suggests exact safe alternatives: `mode='range'` with `start`/`count`,

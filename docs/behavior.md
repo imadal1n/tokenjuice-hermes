@@ -41,7 +41,9 @@ inside `output`, that `output` is also preserved exactly.
 ## Additive Rescue
 
 Eligible oversized web/MCP/browser results can be stored in a per-session blob
-store. The model receives a short preview and an opaque `rescuer_fetch` handle.
+store. Deployment profiles may also opt terminal-like tools such as `terminal`
+and `execute_code` into rescue. The model receives a short preview and an opaque
+`rescuer_fetch` handle.
 
 Rescue only runs when all of these are true:
 
@@ -56,9 +58,10 @@ Default eligible tools:
 - `mcp_tool`
 - `browser_snapshot`
 
-Rescue never applies to `read_file`, terminal-like tools, error payloads, or
-tools whose names start with `tokenjuice`, `rescuer`, `memory`, `delegate`, or
-`session`.
+When terminal-like tools are explicitly listed in `tokenjuice_rescue_tool_names`,
+rescue gets first refusal and terminal compaction remains the fallback. Rescue
+never applies to `read_file`, error payloads, or tools whose names start with
+`tokenjuice`, `rescuer`, `memory`, `delegate`, or `session`.
 
 Preview shape:
 
