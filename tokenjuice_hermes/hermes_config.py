@@ -45,9 +45,7 @@ def load_hermes_plugin_config_from(path: str, plugin_name: str) -> dict[str, Jso
     return _top_level_tokenjuice_config(parsed)
 
 
-def _plugin_entry_config(
-    parsed: dict[str, JsonValue], plugin_name: str
-) -> dict[str, JsonValue]:
+def _plugin_entry_config(parsed: dict[str, JsonValue], plugin_name: str) -> dict[str, JsonValue]:
     plugins = _as_json_object(parsed.get("plugins"))
     if plugins is None:
         return {}
@@ -62,11 +60,7 @@ def _plugin_entry_config(
 
 
 def _top_level_tokenjuice_config(parsed: dict[str, JsonValue]) -> dict[str, JsonValue]:
-    return {
-        key: value
-        for key, value in parsed.items()
-        if key.startswith(_TOKENJUICE_PREFIX)
-    }
+    return {key: value for key, value in parsed.items() if key.startswith(_TOKENJUICE_PREFIX)}
 
 
 def _as_json_object(value: JsonValue | None) -> dict[str, JsonValue] | None:
@@ -89,9 +83,7 @@ def _load_yaml(text: str) -> dict[str, JsonValue]:
     return _parse_yaml_mapping(tokens, 0, -1).value
 
 
-def _parse_yaml_mapping(
-    tokens: list[_YamlEntry], index: int, base_indent: int
-) -> _ParsedMapping:
+def _parse_yaml_mapping(tokens: list[_YamlEntry], index: int, base_indent: int) -> _ParsedMapping:
     result: dict[str, JsonValue] = {}
     while index < len(tokens):
         entry = tokens[index]
@@ -138,11 +130,7 @@ def _parse_yaml_scalar(value: str) -> JsonValue:
 
 
 def _is_quoted(value: str) -> bool:
-    return (
-        len(value) >= _MIN_QUOTED_LENGTH
-        and value[0] == value[-1]
-        and value[0] in _QUOTE_CHARS
-    )
+    return len(value) >= _MIN_QUOTED_LENGTH and value[0] == value[-1] and value[0] in _QUOTE_CHARS
 
 
 def _yaml_scalar_value(value: str) -> JsonValue:
