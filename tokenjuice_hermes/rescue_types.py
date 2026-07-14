@@ -1,9 +1,8 @@
 """Rescue store configuration constants and typed defaults.
 
-The canonical container path is declared here so that callers can inject it
-through flat kwargs/config. The companion host state volume, owner, and mode
-are recorded as constants for downstream Nix wiring; this module does not
-attempt to create or chown the host path.
+The canonical container path is declared here so callers can inject it through
+flat kwargs/config. Owner and mode defaults are recorded for downstream Nix
+wiring; this module does not attempt to create or chown the runtime path.
 """
 
 from __future__ import annotations
@@ -13,8 +12,8 @@ from typing import TypedDict
 # Canonical runtime path inside the Hermes container.
 RESCUE_STORE_PATH_DEFAULT: str = "/opt/data/tokenjuice-hermes/rescue-blobs"
 
-# Host state volume that backs the container path via Nix mount wiring.
-RESCUE_HOST_STATE_VOLUME: str = "<local-home>/hermes-state/tokenjuice-hermes/rescue-blobs"
+# Compatibility alias for callers that still import the old constant name.
+RESCUE_HOST_STATE_VOLUME: str = RESCUE_STORE_PATH_DEFAULT
 
 # Owner and permissions for the persistent state directory.
 RESCUE_STORE_UID: int = 1000

@@ -154,9 +154,9 @@ def test_rescue_store_sweep_removes_blob_when_no_session_references(
 def test_rescue_store_path_constants_declare_canonical_paths() -> None:
     # Given: the rescue store wiring constants.
 
-    # Then: they match the persistent container/host layout for later Nix wiring.
+    # Then: they match the persistent runtime-volume layout for later Nix wiring.
     assert RESCUE_STORE_PATH_DEFAULT == "/opt/data/tokenjuice-hermes/rescue-blobs"
-    assert RESCUE_HOST_STATE_VOLUME == "<local-home>/hermes-state/tokenjuice-hermes/rescue-blobs"
+    assert RESCUE_HOST_STATE_VOLUME == RESCUE_STORE_PATH_DEFAULT
     assert RESCUE_STORE_UID == 1000
     assert RESCUE_STORE_GID == 100
     assert RESCUE_STORE_MODE == 0o700
