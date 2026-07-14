@@ -28,6 +28,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from tokenjuice_hermes.json_types import JsonValue
+
 _PLUGIN_PATH_DEFAULT: str = "/opt/data/plugins/tokenjuice-hermes"
 _PLUGIN_PATH_ENV: str = "TOKENJUICE_SMOKE_PLUGIN_PATH"
 _LIVE_RESCUE_STORE: str = "/opt/data/tokenjuice-hermes/rescue-blobs"
@@ -49,8 +51,17 @@ class _SmokeHost:
     def register_middleware(self, name: str, callback: Callable[..., object]) -> None:
         self.middlewares[name] = callback
 
-    def register_tool(self, name: str, callback: Callable[..., object]) -> None:
-        self.tools[name] = callback
+    def register_tool(
+        self,
+        *,
+        name: str,
+        toolset: str,
+        schema: dict[str, JsonValue],
+        handler: Callable[..., object],
+        description: str,
+    ) -> None:
+        _ = toolset, schema, description
+        self.tools[name] = handler
 
 
 def _plugin_path() -> Path:
@@ -60,11 +71,6 @@ def _plugin_path() -> Path:
 
 def _big_content(lines: int = 150) -> str:
     return "\n".join(f"tokenjuice smoke line {number:04d}" for number in range(1, lines + 1))
-
-
-def _extract_handle(text: str) -> str | None:
-    match = re.search(r"\b[0-9a-f]{12}\b", text)
-    return match.group(0) if match else None
 
 
 def _extract_handle(text: str) -> str | None:
@@ -107,6 +113,8 @@ def _run_fetch(host: _SmokeHost, handle: str) -> tuple[bool, str]:
     fetched = fetch(
         args={"id": handle, "mode": "range", "start": 0, "count": 5},
         session_id=_SMOKE_SESSION,
+        task_id="tokenjuice-smoke-task",
+        tool_call_id="tokenjuice-smoke-call",
     )
     if not isinstance(fetched, str):
         return False, "rescuer_fetch returned non-string"
@@ -116,20 +124,28 @@ def _run_fetch(host: _SmokeHost, handle: str) -> tuple[bool, str]:
     return True, ""
 
 
-def _run_status(host: _SmokeHost) -> tuple[bool, dict[str, object], str]:
+def _run_status(host: _SmokeHost) -> tuple[bool, dict[str, JsonValue], str]:
     """Invoke tokenjuice_status and return (ok, snapshot, detail)."""
     status_fn = host.tools.get("tokenjuice_status")
     if status_fn is None:
         return False, {}, "tokenjuice_status not registered"
 
-    status_text = status_fn(args={})
+    status_text = status_fn(
+        args={},
+        session_id=_SMOKE_SESSION,
+        task_id="tokenjuice-smoke-task",
+    )
     if not isinstance(status_text, str):
         return False, {}, "tokenjuice_status returned non-string"
 
     try:
-        snapshot = json.loads(status_text)
+        parsed = json.loads(status_text)
     except json.JSONDecodeError as exc:
         return False, {}, f"status JSON decode failed: {exc}"
+    if not isinstance(parsed, dict):
+        return False, {}, "tokenjuice_status returned non-object JSON"
+
+    snapshot = {str(key): value for key, value in parsed.items()}
 
     return True, snapshot, ""
 
@@ -142,7 +158,7 @@ def _print_safe_summary(
     rescue_ok: bool,
     fetch_ok: bool,
     status_ok: bool,
-    status: dict[str, object],
+    status: dict[str, JsonValue],
     temp_store_removed: bool,
 ) -> None:
     print(f"import_ok={str(import_ok).lower()}")
@@ -153,19 +169,20 @@ def _print_safe_summary(
     print(f"status_ok={str(status_ok).lower()}")
     print(f"rescue_count={status.get('rescue_count', 0)}")
     print(f"fetch_count={status.get('fetch_count', 0)}")
-    store = status.get("store", {}) if isinstance(status.get("store"), dict) else {}
+    store_value = status.get("store")
+    store = store_value if isinstance(store_value, dict) else {}
     print(f"live_blob_count={store.get('live_blob_count', 0)}")
     print(f"temp_store_removed={str(temp_store_removed).lower()}")
 
 
 def _exercise_plugin(
-    plugin_module: object,
+    register: Callable[[_SmokeHost], None],
     store_path: str,
-) -> tuple[bool, bool, bool, bool, dict[str, object], str]:
+) -> tuple[bool, bool, bool, bool, dict[str, JsonValue], str]:
     """Register and exercise rescue/fetch/status, returning results and any error."""
     host = _SmokeHost({"tokenjuice_rescue_store_path": store_path})
     try:
-        plugin_module.register(host)
+        register(host)
     except Exception as exc:  # noqa: BLE001 - smoke script must report failures safely
         return False, False, False, False, {}, f"register_failed: {type(exc).__name__}"
 
@@ -189,7 +206,7 @@ def main() -> int:
     rescue_ok = False
     fetch_ok = False
     status_ok = False
-    status: dict[str, object] = {}
+    status: dict[str, JsonValue] = {}
     temp_store_removed = False
     error = ""
 
@@ -212,6 +229,7 @@ def main() -> int:
     tmp_path: Path | None = None
     with tempfile.TemporaryDirectory(prefix="tokenjuice-smoke-") as tmp:
         tmp_path = Path(tmp)
+        register: Callable[[_SmokeHost], None] | None = None
 
         # The runtime mount directory is named tokenjuice-hermes, but Python
         # needs the directory name to match the package name tokenjuice_hermes.
@@ -225,7 +243,8 @@ def main() -> int:
         try:
             plugin_module = importlib.import_module("tokenjuice_hermes.plugin")
             import_ok = True
-            register_callable = callable(getattr(plugin_module, "register", None))
+            register = getattr(plugin_module, "register", None)
+            register_callable = callable(register)
         except Exception as exc:  # noqa: BLE001 - smoke script must report failures safely
             error = f"import_failed: {type(exc).__name__}"
 
@@ -245,9 +264,9 @@ def main() -> int:
             print(f"error={error}")
             return 1
 
-        if register_callable:
+        if register is not None:
             transform_registered, rescue_ok, fetch_ok, status_ok, status, error = _exercise_plugin(
-                plugin_module, str(tmp_path)
+                register, str(tmp_path)
             )
 
     temp_store_removed = tmp_path is not None and not tmp_path.exists()
