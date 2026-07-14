@@ -108,8 +108,9 @@ uv build
 
 `<source-checkout>` on the `main` branch is the canonical
 source for the deployment target Hermes deployment. The Nix package expression at
-`<downstream-package-expression>` builds from this
-worktree and compares it with the downstream package source package mirror during `checkPhase`.
+`<downstream-package-expression>` builds the revision
+locked from that repository and compares it with the downstream package source package mirror
+during `checkPhase`.
 
 Make TokenJuice behavior changes here first, keep the downstream package source mirror
 byte-for-byte aligned in the same task, and run the Nix package build before an
