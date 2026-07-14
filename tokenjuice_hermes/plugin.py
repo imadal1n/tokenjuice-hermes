@@ -140,7 +140,11 @@ def _try_register_fetch_tool(
     if not callable(register_tool):
         return False
 
-    def _fetch_tool(args: dict[str, object], session_id: str = "") -> str:
+    def _fetch_tool(
+        args: dict[str, object],
+        session_id: str = "",
+        **_kwargs: JsonValue,
+    ) -> str:
         return rescuer_fetch(args, session_id=session_id, config=config)
 
     return _try_register_tool(
@@ -193,7 +197,11 @@ def _try_register_status_tool(
 
     store_path = _rescue_store_path(config)
 
-    def _status_tool(args: dict[str, object], session_id: str = "") -> str:
+    def _status_tool(
+        args: dict[str, object],
+        session_id: str = "",
+        **_kwargs: JsonValue,
+    ) -> str:
         _ = session_id
         return tokenjuice_status(args, store_path=store_path)
 

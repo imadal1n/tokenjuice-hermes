@@ -44,6 +44,41 @@ def test_register_adds_rescuer_fetch_on_hermes_registry_host() -> None:
     assert "tokenjuice_status" in host.tools
 
 
+def test_hermes_registry_tools_accept_runtime_context_kwargs(tmp_path: Path) -> None:
+    # Given: registry-registered TokenJuice tools and a rescued blob.
+    host = HermesRegistryHost(
+        config={"tokenjuice_rescue_store_path": str(tmp_path)},
+        session_id="session-a",
+    )
+    register(host)
+    result = host.invoke_hook(
+        "transform_tool_result",
+        web_result(big_web_content()),
+        tool_name="web_search",
+    )
+    blob_id = extract_hex_handle(result or "")
+    assert blob_id is not None
+
+    # When: Hermes dispatches the registered handlers with task-scoped kwargs.
+    fetched = host.tools["rescuer_fetch"](
+        {"id": blob_id, "mode": "full"},
+        session_id="session-a",
+        task_id="task-a",
+        tool_call_id="call-a",
+    )
+    status = host.tools["tokenjuice_status"](
+        {},
+        session_id="session-a",
+        task_id="task-a",
+    )
+
+    # Then: the runtime context is ignored without changing tool behavior.
+    assert isinstance(fetched, str)
+    assert "web result line 0001" in fetched
+    assert isinstance(status, str)
+    assert '"version"' in status
+
+
 def test_tool_host_fetch_redeems_stored_blob(tmp_path: Path) -> None:
     # Given: an oversized web result and a tool-capable host.
     host = ToolHost()
