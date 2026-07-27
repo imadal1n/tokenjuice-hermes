@@ -1090,8 +1090,8 @@ class TestStructuredPruningHermesSeam:
         # Then: the structured_context_prune hook is registered.
         assert "structured_context_prune" in host.hooks
 
-    def test_hermes_seam_prunes_without_current_pressure_tokens(self) -> None:
-        # Given: Hermes seam context fields but no current_pressure_tokens.
+    def test_explicit_target_tokens_prune_without_current_pressure_tokens(self) -> None:
+        # Given: hook context fields with explicit pressure and target token bounds.
         cfg = dict(_STRUCTURED_PRUNING_TEST_CONFIG)
         cfg["tokenjuice_prompt_pruning_protect_recent_messages"] = 0
         cfg["tokenjuice_prompt_pruning_protect_recent_tool_interactions"] = 0
@@ -1155,7 +1155,7 @@ class TestStructuredPruningHermesSeam:
         contributions = [system_part, user, old_terminal, tool_schema]
         tool_schema_tokens = 100
 
-        # When: the hook is invoked exactly as Hermes does (no current_pressure_tokens).
+        # When: the hook is invoked with explicit threshold/trigger/target tokens.
         raw_result = callback(
             contributions,
             phase="pre_api",

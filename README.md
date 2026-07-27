@@ -15,6 +15,9 @@ registration hooks.
   configured aliases) with `head_tail`, `metadata`, or `off` modes.
 - Prunes older terminal-like results in outbound `llm_request` payloads when
   request history is under context pressure.
+- Adds smart structured pruning for Hermes hosts that expose
+  `structured_context_prune`, shaping a temporary provider-bound view before
+  Hermes' pressure gates run.
 - Rescues oversized web/MCP/browser results into a session-scoped blob store and
   emits a preview plus an opaque `rescuer_fetch` handle. Deployment profiles can
   also opt terminal-like tools into rescue before omitted-middle compaction.
@@ -26,6 +29,37 @@ registration hooks.
 - Keeps `read_file`, diagnostics, `stderr`, traceback-bearing output, malformed
   inputs, unsupported tools, missing sessions, and missing stores exact or
   unchanged.
+
+## Smart Structured Pruning
+
+When enabled, structured pruning runs before both Hermes preflight and pre-API
+pressure gates. Hermes uses the same effective messages, tools, and system prompt
+view for pressure estimation and provider dispatch, while the saved transcript and
+canonical conversation history remain unchanged.
+
+The policy is fail-safe. Protected and unknown contribution classes remain exact;
+invalid config or malformed contributions return `None` so Hermes keeps its full
+view. Assistant/tool interactions, including multi-call tool batches, are pruned
+atomically. Provider-native message/tool shapes are preserved, including
+multimodal content and a single system-prompt view.
+
+Operators can tune trigger ratio, soft/hard targets, cache TTL, recent message and
+tool-interaction windows, disposable classes, minimum savings, and aggregate
+accounting. `tokenjuice_prompt_pruning_target_ratio` is only the fallback when
+soft or hard phase targets are omitted. Current Hermes does not pass
+`target_tokens`, so omitted phase targets inherit `target_ratio`; explicit phase
+targets remain authoritative.
+
+Candidate selection protects young cache-prefix material with the configured TTL
+and, when multiple safe sets meet the target, prefers the longest provider-cache
+prefix by mutating the latest possible contribution first. The older
+`llm_request` middleware remains an older-host fallback and final send-time relief
+valve, not proof that Hermes compression was delayed. Structured-pruning
+accounting is redacted and aggregate-only.
+
+See [Behavior](docs/behavior.md#structured-context-pruning),
+[Configuration](docs/configuration.md#structured-pruning-kwargs), and
+[Security](docs/security.md#guarantees) for the detailed contract.
 
 ## Documentation
 
@@ -66,6 +100,10 @@ $HERMES_HOME/plugins/tokenjuice-hermes/
   plugin.py
   plugin.yaml
   request_pruning.py
+  structured_pruning.py
+  structured_pruning_config.py
+  structured_pruning_groups.py
+  structured_pruning_types.py
   py.typed
   rescue_excerpt.py
   rescue_fetch.py
