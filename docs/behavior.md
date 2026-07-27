@@ -1,6 +1,6 @@
 # Behavior
 
-`tokenjuice-hermes` has four independent paths. Each path is guarded by the host
+`tokenjuice-hermes` has five independent paths. Each path is guarded by the host
 surface that supports it.
 
 ## Compaction
@@ -37,6 +37,35 @@ Older hosts fall back to request-size thresholds. Recent tail results and every
 
 Error results preserve `stderr` exactly. If a tool puts stderr or traceback text
 inside `output`, that `output` is also preserved exactly.
+
+## Structured Context Pruning
+
+When the host exposes Hermes' `structured_context_prune` hook, TokenJuice can
+shape a temporary effective request view before Hermes computes pressure for its
+compression gates. This path is separate from `llm_request` middleware.
+
+Lifecycle:
+
+1. Hermes builds structured prompt/message/tool contributions for the current
+   call.
+2. TokenJuice classifies the contributions and only considers explicitly
+   disposable classes, currently `terminal_tool_output`.
+3. Hermes uses the returned effective messages/tools/system prompt for the same
+   pressure estimate and provider dispatch.
+4. The saved transcript and canonical conversation history remain unchanged.
+
+Pressure routes:
+
+- Below trigger: return `None`; Hermes keeps the full current-call view.
+- Soft pressure: apply soft pruning when safe candidates can meet the soft
+  target while preserving the latest possible provider-cache prefix.
+- Hard pressure: allow hard-clear candidates from configured disposable classes
+  before Hermes falls back to generic compression.
+- Insufficient safe candidates: fail open and let Hermes compression run.
+
+`llm_request` pruning remains a fallback for older hosts and a final send-time
+relief valve. It is not the compaction-delay mechanism because it runs after
+Hermes has already evaluated preflight and pre-API compression.
 
 ## Additive Rescue
 
@@ -127,6 +156,9 @@ Status fields include:
 | `passref_truncated_count` | Number of expansions truncated to a budget. |
 | `passref_budget_exceeded_count` | Number of calls that hit the total budget marker. |
 | `passref_chars_expanded` | Total chars inserted by passref. |
+| `structured_pruning_count` | Number of structured pruning decisions that returned an effective view. |
+| `structured_pruning_saved_tokens` | Estimated aggregate tokens removed from effective request views. |
+| `structured_pruning_fallback_count` | Number of structured pruning calls that failed open or could not meet target safely. |
 | `store.live_blob_count` | Live blobs across all session indexes. |
 | `store.tombstone_count` | Swept blobs kept as tombstones. |
 | `store.total_blob_bytes` | Total bytes of blob files on disk. |

@@ -70,6 +70,36 @@ or `mode='grep'` with a literal `pattern`.
 Passref never expands without an explicit allowlist, and sink tools remain denied
 even if listed.
 
+## Structured Pruning Kwargs
+
+Structured pruning only runs when the Hermes host exposes
+`structured_context_prune`. It is disabled by default and reads only flat
+`tokenjuice_` kwargs supplied by the host.
+
+| Kwarg | Default | Description |
+|---|---:|---|
+| `tokenjuice_prompt_pruning_enabled` | `false` | Enable structured context pruning before Hermes compression gates. |
+| `tokenjuice_prompt_pruning_threshold_tokens` | host threshold | Absolute pressure threshold when the host does not pass one. Invalid or missing values fail open. |
+| `tokenjuice_prompt_pruning_trigger_ratio` | `80` | Percent of threshold where soft pruning can start. |
+| `tokenjuice_prompt_pruning_target_ratio` | `75` | Default target percent used when phase-specific targets are absent. |
+| `tokenjuice_prompt_pruning_soft_target_ratio` | `75` | Target percent for soft-pressure pruning. |
+| `tokenjuice_prompt_pruning_hard_target_ratio` | `65` | Target percent for hard-pressure pruning. |
+| `tokenjuice_prompt_pruning_min_saved_tokens` | `256` | Minimum estimated savings before a candidate is worth mutating. |
+| `tokenjuice_prompt_pruning_cache_ttl_seconds` | `3600` | Protects young cache-prefix material unless hard pressure leaves no safe alternative. |
+| `tokenjuice_prompt_pruning_protect_recent_messages` | `8` | Recent message window protected from structured pruning. |
+| `tokenjuice_prompt_pruning_protect_recent_tool_interactions` | `2` | Recent assistant/tool interaction window protected from structured pruning. |
+| `tokenjuice_prompt_pruning_classes` | `terminal_tool_output` | Comma-separated disposable classes. Unknown classes are ignored. |
+| `tokenjuice_prompt_pruning_accounting_enabled` | `true` | Emit aggregate redacted counters for status/telemetry. |
+
+Candidate selection first preserves provider-cache locality: if multiple safe
+candidate sets can meet the target, TokenJuice chooses the set whose earliest
+mutated contribution is latest in provider serialization order. Fewer mutated
+groups and larger savings are tie-breakers after the target is met.
+
+Invalid structured-pruning config fails open to the unpruned current-call view.
+It does not disable existing terminal-result compaction or `llm_request` fallback
+behavior.
+
 ## Status Tool
 
 `tokenjuice_status` is registered automatically when the host exposes
@@ -120,6 +150,10 @@ $HERMES_HOME/plugins/tokenjuice-hermes/
   plugin.py
   plugin.yaml
   request_pruning.py
+  structured_pruning.py
+  structured_pruning_config.py
+  structured_pruning_groups.py
+  structured_pruning_types.py
   py.typed
   rescue_excerpt.py
   rescue_fetch.py
@@ -154,8 +188,8 @@ It is not a substitute for unit tests or source-level safety checks.
 ## Deployment Boundary
 
 This package does not activate itself. Live Hermes behavior depends on the target
-profile enabling the plugin, mounting a writable rescue store, and optionally
-enabling passref with an allowlist.
+profile enabling the plugin, mounting a writable rescue store for rescue, and
+optionally enabling passref or structured pruning with explicit kwargs.
 
 Activation requires `rebuild`/rebuild and/or container recreate in deployments that
 derive runtime state from Nix. Those operator steps are outside this package.
