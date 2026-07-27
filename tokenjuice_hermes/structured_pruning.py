@@ -163,9 +163,7 @@ def _resolve_pressure(
     if current_pressure_tokens is not None:
         return current_pressure_tokens if current_pressure_tokens >= 0 else None
     tool_schema_tokens = _int_context(context, "tool_schema_tokens") or 0
-    message_tokens = sum(
-        c.token_estimate for c in parsed_contributions if c.kind != "tool_schema"
-    )
+    message_tokens = sum(c.token_estimate for c in parsed_contributions if c.kind != "tool_schema")
     pressure = message_tokens + tool_schema_tokens
     return pressure if pressure > 0 else None
 

@@ -131,9 +131,7 @@ def resolve_now_ms(
     explicit = context.get("now_epoch_ms")
     if isinstance(explicit, int) and not isinstance(explicit, bool):
         return explicit
-    known_ages = [
-        c.created_at_epoch_ms for c in contributions if c.created_at_epoch_ms is not None
-    ]
+    known_ages = [c.created_at_epoch_ms for c in contributions if c.created_at_epoch_ms is not None]
     if not known_ages:
         return None
     return max(known_ages) + 1000
@@ -206,9 +204,7 @@ def _recent_message_indices(
 ) -> set[int]:
     if count <= 0:
         return set()
-    message_indices = [
-        c.original_index for c in contributions if c.kind == "message"
-    ]
+    message_indices = [c.original_index for c in contributions if c.kind == "message"]
     return set(message_indices[-count:])
 
 
@@ -238,9 +234,7 @@ def _build_group(
     oldest_created_at_ms = _oldest_created_at(contributions)
 
     disposable_members = [
-        c
-        for c in contributions
-        if c.class_ in config.classes and c.class_ not in PROTECTED_CLASSES
+        c for c in contributions if c.class_ in config.classes and c.class_ not in PROTECTED_CLASSES
     ]
     has_disposable = bool(disposable_members) and any(
         c.prune_policy in {SOFT_TRIM_POLICY, HARD_CLEAR_POLICY} for c in disposable_members

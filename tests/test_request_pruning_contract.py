@@ -739,9 +739,7 @@ class TestStructuredPruningPolicy:
             threshold_tokens=threshold,
             **cfg,
         )
-        assert result is None or other["id"] in {
-            c["id"] for c in result["effective_contributions"]
-        }
+        assert result is None or other["id"] in {c["id"] for c in result["effective_contributions"]}
 
     def test_omitted_enabled_defaults_to_disabled(self) -> None:
         cfg = {
@@ -830,9 +828,7 @@ class TestStructuredPruningPolicy:
             **default_cfg,
         )
         assert default_result is not None
-        assert mid_sized["id"] not in {
-            c["id"] for c in default_result["effective_contributions"]
-        }
+        assert mid_sized["id"] not in {c["id"] for c in default_result["effective_contributions"]}
 
         cfg["tokenjuice_prompt_pruning_min_saved_tokens"] = override_min_saved
         override_result = _prune_structured_context(
@@ -919,10 +915,12 @@ class TestStructuredPruningHermesSeam:
             content="old tool output",
             age_seconds=60,
         )
-        terminal_tool = json.dumps({
-            "type": "function",
-            "function": {"name": "terminal", "description": "Run shell commands"},
-        })
+        terminal_tool = json.dumps(
+            {
+                "type": "function",
+                "function": {"name": "terminal", "description": "Run shell commands"},
+            }
+        )
         tool_schema = _contribution(
             contribution_id="tool-schema-0",
             kind="tool_schema",
@@ -1048,4 +1046,3 @@ class TestStructuredPruningHermesSeam:
 
         # Then: fail-open because true request pressure is tiny; context_length is not pressure.
         assert result is None
-

@@ -134,9 +134,7 @@ def _parse_config(context: dict[str, JsonValue]) -> PruningConfig:
     )
 
 
-def _parse_bool(
-    context: dict[str, JsonValue], key: str, *, default: bool
-) -> bool | None:
+def _parse_bool(context: dict[str, JsonValue], key: str, *, default: bool) -> bool | None:
     value = context.get(key)
     if value is None:
         return default
@@ -158,9 +156,7 @@ def _parse_nonnegative_int(
     return value
 
 
-def _parse_positive_int(
-    context: dict[str, JsonValue], key: str, default: int | None
-) -> int | None:
+def _parse_positive_int(context: dict[str, JsonValue], key: str, default: int | None) -> int | None:
     value = _parse_nonnegative_int(context, key, default)
     if value is not None and value <= 0:
         return None
@@ -174,9 +170,7 @@ def _parse_ratio(context: dict[str, JsonValue], key: str, default: int) -> int |
     return value
 
 
-def _parse_classes(
-    context: dict[str, JsonValue], key: str, default: str
-) -> frozenset[str] | None:
+def _parse_classes(context: dict[str, JsonValue], key: str, default: str) -> frozenset[str] | None:
     value = context.get(key)
     if value is None:
         return frozenset(item.strip() for item in default.split(",") if item.strip())
