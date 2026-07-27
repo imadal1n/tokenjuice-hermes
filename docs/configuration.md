@@ -81,9 +81,9 @@ Structured pruning only runs when the Hermes host exposes
 | `tokenjuice_prompt_pruning_enabled` | `false` | Enable structured context pruning before Hermes compression gates. |
 | `tokenjuice_prompt_pruning_threshold_tokens` | host threshold | Absolute pressure threshold when the host does not pass one. Invalid or missing values fail open. |
 | `tokenjuice_prompt_pruning_trigger_ratio` | `80` | Percent of threshold where soft pruning can start. |
-| `tokenjuice_prompt_pruning_target_ratio` | `75` | Default target percent used when phase-specific targets are absent. |
-| `tokenjuice_prompt_pruning_soft_target_ratio` | `75` | Target percent for soft-pressure pruning. |
-| `tokenjuice_prompt_pruning_hard_target_ratio` | `65` | Target percent for hard-pressure pruning. |
+| `tokenjuice_prompt_pruning_target_ratio` | `75` | Default target percent used when soft/hard targets are absent. |
+| `tokenjuice_prompt_pruning_soft_target_ratio` | inherits `target_ratio` | Target percent for soft-pressure pruning when explicitly set. |
+| `tokenjuice_prompt_pruning_hard_target_ratio` | inherits `target_ratio` | Target percent for hard-pressure pruning when explicitly set. |
 | `tokenjuice_prompt_pruning_min_saved_tokens` | `256` | Minimum estimated savings before a candidate is worth mutating. |
 | `tokenjuice_prompt_pruning_cache_ttl_seconds` | `3600` | Protects young cache-prefix material unless hard pressure leaves no safe alternative. |
 | `tokenjuice_prompt_pruning_protect_recent_messages` | `8` | Recent message window protected from structured pruning. |
