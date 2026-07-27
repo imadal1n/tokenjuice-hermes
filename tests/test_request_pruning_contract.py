@@ -260,6 +260,7 @@ def _prune_structured_context(
 ) -> StructuredPruningResult | None:
     from tokenjuice_hermes.structured_pruning import prune_structured_context  # noqa: PLC0415
 
+    _ = kwargs.setdefault("now_epoch_ms", _DETERMINISTIC_EPOCH_MS)
     return prune_structured_context(
         contributions,
         current_pressure_tokens,
@@ -278,16 +279,18 @@ def _contribution(  # noqa: PLR0913
     token_estimate: int,
     prune_policy: str,
     atomic_group_id: str | None = None,
-    age_seconds: int = 0,
+    age_seconds: int = 7200,
     content: str = "",
     tool_calls: list[JsonValue] | None = None,
+    provider_message: dict[str, JsonValue] | None = None,
+    provider_tool: dict[str, JsonValue] | None = None,
     protected_reason: str = "",
     cache_scope: str = "body",
 ) -> Contribution:
     full_content = content
     if tool_calls is not None:
         full_content = json.dumps({"content": content, "tool_calls": tool_calls})
-    return {
+    contribution: Contribution = {
         "id": contribution_id,
         "kind": kind,
         "provenance": provenance,
@@ -304,6 +307,11 @@ def _contribution(  # noqa: PLR0913
         "content": content,
         "tool_calls": tool_calls if tool_calls is not None else [],
     }
+    if provider_message is not None:
+        contribution["provider_message"] = provider_message
+    if provider_tool is not None:
+        contribution["provider_tool"] = provider_tool
+    return contribution
 
 
 def _trigger_tokens(cfg: dict[str, bool | int | str]) -> int:
@@ -397,6 +405,7 @@ class TestStructuredPruningPolicy:
     def test_cache_ttl_gates_young_prunable_contribution(self) -> None:
         cfg = dict(_STRUCTURED_PRUNING_TEST_CONFIG)
         cfg["tokenjuice_prompt_pruning_protect_recent_messages"] = 0
+        cfg["tokenjuice_prompt_pruning_protect_recent_tool_interactions"] = 0
         ttl_seconds = cfg["tokenjuice_prompt_pruning_cache_ttl_seconds"]
         assert isinstance(ttl_seconds, int)
         threshold = cfg["tokenjuice_prompt_pruning_threshold_tokens"]
@@ -439,6 +448,52 @@ class TestStructuredPruningPolicy:
         kept_ids = {c["id"] for c in result["effective_contributions"]}
         assert young_prunable["id"] in kept_ids
         assert old_disposable["id"] not in kept_ids
+
+    def test_cache_ttl_gates_young_turn_ephemeral_terminal_candidate(self) -> None:
+        cfg = dict(_STRUCTURED_PRUNING_TEST_CONFIG)
+        cfg["tokenjuice_prompt_pruning_protect_recent_messages"] = 0
+        cfg["tokenjuice_prompt_pruning_protect_recent_tool_interactions"] = 0
+        ttl_seconds = cfg["tokenjuice_prompt_pruning_cache_ttl_seconds"]
+        threshold = cfg["tokenjuice_prompt_pruning_threshold_tokens"]
+        min_saved = cfg["tokenjuice_prompt_pruning_min_saved_tokens"]
+        assert isinstance(ttl_seconds, int)
+        assert isinstance(threshold, int)
+        assert isinstance(min_saved, int)
+
+        young_terminal = _contribution(
+            contribution_id="young-terminal",
+            kind="tool_interaction",
+            provenance="conversation_history",
+            class_="terminal_tool_output",
+            stability="turn_ephemeral",
+            token_estimate=min_saved,
+            prune_policy="hard_clear_allowed",
+            content="x" * min_saved,
+            age_seconds=ttl_seconds // 2,
+        )
+        old_terminal = _contribution(
+            contribution_id="old-terminal",
+            kind="tool_interaction",
+            provenance="conversation_history",
+            class_="terminal_tool_output",
+            stability="turn_ephemeral",
+            token_estimate=threshold,
+            prune_policy="hard_clear_allowed",
+            content="y" * threshold,
+            age_seconds=ttl_seconds * 2,
+        )
+
+        result = _prune_structured_context(
+            [young_terminal, old_terminal],
+            current_pressure_tokens=threshold + min_saved,
+            threshold_tokens=threshold,
+            **cfg,
+        )
+
+        assert result is not None
+        kept_ids = {c["id"] for c in result["effective_contributions"]}
+        assert young_terminal["id"] in kept_ids
+        assert old_terminal["id"] not in kept_ids
 
     def test_soft_pressure_uses_only_soft_trim_candidates(self) -> None:
         cfg = dict(_STRUCTURED_PRUNING_TEST_CONFIG)
@@ -617,6 +672,87 @@ class TestStructuredPruningPolicy:
         kept_ids = {c["id"] for c in pruned["effective_contributions"]}
         assert (call["id"] in kept_ids) == (result["id"] in kept_ids)
 
+    def test_multi_call_tool_interaction_is_pruned_atomically(self) -> None:
+        cfg = dict(_STRUCTURED_PRUNING_TEST_CONFIG)
+        cfg["tokenjuice_prompt_pruning_protect_recent_messages"] = 0
+        cfg["tokenjuice_prompt_pruning_protect_recent_tool_interactions"] = 0
+        threshold = cfg["tokenjuice_prompt_pruning_threshold_tokens"]
+        assert isinstance(threshold, int)
+        group_id = "tool-batch:call-a,call-b"
+
+        assistant = _contribution(
+            contribution_id="assistant-batch",
+            kind="message",
+            provenance="conversation_history",
+            class_="assistant_message",
+            stability="turn_ephemeral",
+            token_estimate=_small_token_estimate(cfg),
+            prune_policy="never",
+            atomic_group_id=group_id,
+            content="",
+            provider_message={
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call-a",
+                        "type": "function",
+                        "function": {"name": "terminal", "arguments": "{}"},
+                    },
+                    {
+                        "id": "call-b",
+                        "type": "function",
+                        "function": {"name": "terminal", "arguments": "{}"},
+                    },
+                ],
+            },
+        )
+        result_a = _contribution(
+            contribution_id="result-a",
+            kind="tool_interaction",
+            provenance="conversation_history",
+            class_="terminal_tool_output",
+            stability="turn_ephemeral",
+            token_estimate=threshold,
+            prune_policy="hard_clear_allowed",
+            atomic_group_id=group_id,
+            content="a" * threshold,
+            provider_message={
+                "role": "tool",
+                "tool_call_id": "call-a",
+                "name": "terminal",
+                "content": "a" * threshold,
+            },
+        )
+        result_b = _contribution(
+            contribution_id="result-b",
+            kind="tool_interaction",
+            provenance="conversation_history",
+            class_="terminal_tool_output",
+            stability="turn_ephemeral",
+            token_estimate=threshold,
+            prune_policy="hard_clear_allowed",
+            atomic_group_id=group_id,
+            content="b" * threshold,
+            provider_message={
+                "role": "tool",
+                "tool_call_id": "call-b",
+                "name": "terminal",
+                "content": "b" * threshold,
+            },
+        )
+
+        pruned = _prune_structured_context(
+            [assistant, result_a, result_b],
+            current_pressure_tokens=threshold * 2,
+            threshold_tokens=threshold,
+            **cfg,
+        )
+
+        assert pruned is not None
+        kept_ids = {c["id"] for c in pruned["effective_contributions"]}
+        assert {assistant["id"], result_a["id"], result_b["id"]}.isdisjoint(kept_ids)
+
     def test_lcp_prefers_later_mutation_over_larger_savings(self) -> None:
         cfg = dict(_STRUCTURED_PRUNING_TEST_CONFIG)
         cfg["tokenjuice_prompt_pruning_protect_recent_messages"] = 0
@@ -716,6 +852,54 @@ class TestStructuredPruningPolicy:
         )
         assert result is not None
         assert custom["id"] not in {c["id"] for c in result["effective_contributions"]}
+
+    def test_soft_and_hard_target_ratio_overrides_change_outcome(self) -> None:
+        cfg = dict(_STRUCTURED_PRUNING_TEST_CONFIG)
+        cfg["tokenjuice_prompt_pruning_protect_recent_messages"] = 0
+        cfg["tokenjuice_prompt_pruning_protect_recent_tool_interactions"] = 0
+        cfg["tokenjuice_prompt_pruning_soft_target_ratio"] = 79
+        cfg["tokenjuice_prompt_pruning_hard_target_ratio"] = 99
+        cfg["tokenjuice_prompt_pruning_min_saved_tokens"] = 1
+        threshold = cfg["tokenjuice_prompt_pruning_threshold_tokens"]
+        assert isinstance(threshold, int)
+
+        soft_candidate = _contribution(
+            contribution_id="soft-candidate",
+            kind="tool_interaction",
+            provenance="conversation_history",
+            class_="terminal_tool_output",
+            stability="turn_ephemeral",
+            token_estimate=200,
+            prune_policy="soft_trim",
+            content="s" * 200,
+        )
+        soft_result = _prune_structured_context(
+            [soft_candidate],
+            current_pressure_tokens=int(threshold * 0.80),
+            threshold_tokens=threshold,
+            **cfg,
+        )
+        assert soft_result is not None
+        assert soft_candidate["id"] not in {c["id"] for c in soft_result["effective_contributions"]}
+
+        hard_candidate = _contribution(
+            contribution_id="hard-candidate",
+            kind="tool_interaction",
+            provenance="conversation_history",
+            class_="terminal_tool_output",
+            stability="turn_ephemeral",
+            token_estimate=50,
+            prune_policy="hard_clear_allowed",
+            content="h" * 50,
+        )
+        hard_result = _prune_structured_context(
+            [hard_candidate],
+            current_pressure_tokens=threshold,
+            threshold_tokens=threshold,
+            **cfg,
+        )
+        assert hard_result is not None
+        assert hard_candidate["id"] not in {c["id"] for c in hard_result["effective_contributions"]}
 
     def test_default_classes_only_terminal_tool_output(self) -> None:
         cfg = dict(_STRUCTURED_PRUNING_TEST_CONFIG)
@@ -973,6 +1157,7 @@ class TestStructuredPruningHermesSeam:
         assert "old tool output" not in message_contents
         assert "system instruction" in message_contents
         assert "user question" in message_contents
+        assert result["effective_system_prompt"] == ""
 
         effective_tools = result["effective_tools"]
         if isinstance(effective_tools, list):
@@ -983,6 +1168,80 @@ class TestStructuredPruningHermesSeam:
                     found_terminal = True
                     break
             assert found_terminal
+
+    def test_hermes_seam_preserves_provider_messages_exactly(self) -> None:
+        cfg = dict(_STRUCTURED_PRUNING_TEST_CONFIG)
+        cfg["tokenjuice_prompt_pruning_protect_recent_messages"] = 0
+        cfg["tokenjuice_prompt_pruning_protect_recent_tool_interactions"] = 0
+        host = HermesHost(config=cast("dict[str, JsonValue]", cfg))
+        register(host)
+        callback = host.callbacks["structured_context_prune"]
+        threshold = cfg["tokenjuice_prompt_pruning_threshold_tokens"]
+        assert isinstance(threshold, int)
+        system_message: dict[str, JsonValue] = {"role": "system", "content": "SYSTEM"}
+        multimodal_user: dict[str, JsonValue] = {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "see image"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
+            ],
+            "metadata": {"kept": True},
+        }
+        terminal = _contribution(
+            contribution_id="old-terminal",
+            kind="tool_interaction",
+            provenance="conversation_history",
+            class_="terminal_tool_output",
+            stability="turn_ephemeral",
+            token_estimate=threshold,
+            prune_policy="hard_clear_allowed",
+            content="x" * threshold,
+            provider_message={
+                "role": "tool",
+                "tool_call_id": "call-old",
+                "name": "terminal",
+                "content": "x" * threshold,
+            },
+            age_seconds=7200,
+        )
+        contributions = [
+            _contribution(
+                contribution_id="system-message",
+                kind="message",
+                provenance="conversation_history",
+                class_="unknown",
+                stability="turn_ephemeral",
+                token_estimate=10,
+                prune_policy="never",
+                content="SYSTEM",
+                provider_message=system_message,
+            ),
+            _contribution(
+                contribution_id="multimodal-user",
+                kind="message",
+                provenance="conversation_history",
+                class_="user_message",
+                stability="session_stable",
+                token_estimate=10,
+                prune_policy="never",
+                content="multimodal",
+                provider_message=multimodal_user,
+            ),
+            terminal,
+        ]
+
+        raw_result = callback(
+            contributions,
+            phase="pre_api",
+            threshold_tokens=threshold,
+            trigger_tokens=int(threshold * 0.8),
+            now_epoch_ms=_DETERMINISTIC_EPOCH_MS,
+        )
+
+        assert isinstance(raw_result, dict)
+        result = cast("StructuredPruningResult", cast("object", raw_result))
+        assert result["effective_messages"] == [system_message, multimodal_user]
+        assert result["effective_system_prompt"] == ""
 
     def test_hermes_seam_returns_none_when_pressure_cannot_be_derived(self) -> None:
         # Given: no current_pressure_tokens and no contribution estimates from which

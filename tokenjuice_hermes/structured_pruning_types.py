@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Final, TypedDict
+from typing import Final, NotRequired, TypedDict
 
 from .json_types import JsonValue
 
@@ -62,6 +62,8 @@ Contribution = TypedDict(
         "created_at_epoch_ms": int | None,
         "content": str,
         "tool_calls": list[JsonValue],
+        "provider_message": NotRequired[dict[str, JsonValue]],
+        "provider_tool": NotRequired[dict[str, JsonValue]],
     },
 )
 
@@ -79,6 +81,7 @@ class StructuredPruningResult(TypedDict):
 
     effective_contributions: list[Contribution]
     effective_messages: list[dict[str, JsonValue]]
+    effective_system_prompt: str
     effective_tools: list[dict[str, JsonValue]] | None
     accounting: StructuredPruningAccounting
 

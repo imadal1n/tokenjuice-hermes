@@ -273,9 +273,15 @@ def _is_ttl_protected(
 ) -> bool:
     if now_ms is None or contribution.created_at_epoch_ms is None:
         return False
-    if contribution.stability not in STABLE_STABILITIES:
-        return False
-    if contribution.cache_scope not in PREFIX_CACHE_SCOPES:
+    is_prune_candidate = (
+        contribution.class_ in config.classes
+        and contribution.prune_policy in {SOFT_TRIM_POLICY, HARD_CLEAR_POLICY}
+    )
+    is_cache_stable = (
+        contribution.stability in STABLE_STABILITIES
+        and contribution.cache_scope in PREFIX_CACHE_SCOPES
+    )
+    if not is_prune_candidate and not is_cache_stable:
         return False
     age_seconds = max(0, (now_ms - contribution.created_at_epoch_ms) // 1000)
     return age_seconds < config.cache_ttl_seconds

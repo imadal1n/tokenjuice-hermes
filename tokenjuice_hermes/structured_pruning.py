@@ -95,6 +95,7 @@ def _prune_structured_context(
     result: StructuredPruningResult = {
         "effective_contributions": [c.original for c in retained],
         "effective_messages": effective_messages,
+        "effective_system_prompt": "",
         "effective_tools": effective_tools,
         "accounting": {
             "saved_tokens": saved_tokens,
@@ -222,6 +223,10 @@ def _provider_messages_from_contributions(
             continue
         if contribution.kind == "tool_schema":
             continue
+        provider_message = contribution.original.get("provider_message")
+        if isinstance(provider_message, dict):
+            messages.append(dict(provider_message))
+            continue
         message = _provider_message_from_contribution(contribution)
         if message is not None:
             messages.append(message)
@@ -272,6 +277,10 @@ def _provider_tools_from_contributions(
     tools: list[dict[str, JsonValue]] = []
     for contribution in retained:
         if contribution.kind != "tool_schema":
+            continue
+        provider_tool = contribution.original.get("provider_tool")
+        if isinstance(provider_tool, dict):
+            tools.append(dict(provider_tool))
             continue
         content = contribution.original["content"]
         try:
