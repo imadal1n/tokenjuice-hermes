@@ -178,6 +178,7 @@ def test_configured_terminal_tools_rescue_before_compaction(
     # Then: rescue creates a fetchable handle and clearly marks the inline text as a preview.
     assert result is not None
     assert extract_hex_handle(result) is not None
+    assert isinstance(result, str)
     assert "tool result rescued" in result
     assert "Preview only" in result
 
@@ -207,6 +208,7 @@ def test_registered_transform_uses_persistent_rescue_config(tmp_path: Path) -> N
 
     # Then: the persistent config is enough to produce a fetchable rescue handle.
     assert result is not None
+    assert isinstance(result, str)
     assert "tool result rescued" in result
     assert extract_hex_handle(result) is not None
 
@@ -250,6 +252,7 @@ def test_registered_transform_uses_hermes_config_file_without_ctx_config(
 
     # Then: the Hermes config file alone is enough to produce a rescue handle.
     assert result is not None
+    assert isinstance(result, str)
     assert "tool result rescued" in result
     assert extract_hex_handle(result) is not None
 
@@ -292,6 +295,7 @@ tokenjuice_passref_enabled: false
 
     # Then: top-level persisted config is enough to produce a rescue handle.
     assert result is not None
+    assert isinstance(result, str)
     assert "tool result rescued" in result
     assert extract_hex_handle(result) is not None
 
@@ -334,5 +338,6 @@ tokenjuice_passref_enabled: false
 
     # Then: the persisted config fallback still produces a rescue handle.
     assert result is not None
+    assert isinstance(result, str)
     assert "tool result rescued" in result
     assert extract_hex_handle(result) is not None

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import Protocol, TypeAlias, TypeGuard, cast
+from collections.abc import Callable, Sequence
+from typing import TYPE_CHECKING, Protocol, TypeAlias, TypeGuard, cast
 
 from .compaction import transform_tool_result
 from .hermes_config import load_hermes_plugin_config
@@ -12,10 +12,14 @@ from .request_pruning import prune_llm_request
 from .rescue_fetch import rescuer_fetch
 from .rescue_store import BlobStore
 from .rescue_types import RESCUE_STORE_PATH_DEFAULT
+from .structured_pruning import prune_structured_context
 
-HookCallback: TypeAlias = Callable[..., str | None]
+if TYPE_CHECKING:
+    from .structured_pruning_types import Contribution
+
+HookCallback: TypeAlias = Callable[..., JsonValue | None]
 MiddlewareCallback: TypeAlias = Callable[..., dict[str, JsonValue] | str | None]
-ToolHandler: TypeAlias = Callable[..., str]
+ToolHandler: TypeAlias = Callable[..., JsonValue | None]
 
 _TOOLSET: str = "tokenjuice-hermes"
 _FETCH_TOOL_SCHEMA: dict[str, object] = {
@@ -52,6 +56,7 @@ def register(ctx: HookRegistrar) -> None:
     hook_config = _flat_json_config(config)
 
     _ = _try_register_named_middleware(ctx, "llm_request", prune_llm_request)
+    _ = _try_register_structured_pruning_hook(ctx, config)
 
     fetch_available = _try_register_fetch_tool(ctx, config)
     _ = _try_register_passref_middleware(ctx, config)
@@ -87,6 +92,51 @@ def _try_register_named_middleware(
     except Exception:  # noqa: BLE001 - middleware registration is optional; failures degrade gracefully
         return False
     return True
+
+
+def _try_register_structured_pruning_hook(
+    ctx: HookRegistrar,
+    config: dict[str, object],
+) -> bool:
+    if not _is_structured_pruning_enabled(config):
+        return False
+    register_hook = getattr(ctx, "register_hook", None)
+    if not callable(register_hook):
+        return False
+
+    def _structured_context_prune(
+        contributions: Sequence[Contribution],
+        *,
+        current_pressure_tokens: int,
+        threshold_tokens: int,
+        **kwargs: JsonValue,
+    ) -> dict[str, JsonValue] | None:
+        merged_config = {**config, **kwargs}
+        flat_config = _flat_json_config(merged_config)
+        result = prune_structured_context(
+            contributions,
+            current_pressure_tokens,
+            threshold_tokens,
+            **flat_config,
+        )
+        if result is None:
+            return None
+        return cast("dict[str, JsonValue]", cast("object", result))
+
+    try:
+        _ = register_hook("structured_context_prune", _structured_context_prune)
+    except Exception:  # noqa: BLE001 - hook registration is optional; failures degrade gracefully
+        return False
+    return True
+
+
+def _is_structured_pruning_enabled(config: dict[str, object]) -> bool:
+    value = config.get("tokenjuice_prompt_pruning_enabled")
+    if value is True:
+        return True
+    if isinstance(value, str):
+        return value.lower() in {"true", "yes", "on", "1"}
+    return False
 
 
 def _flat_json_config(config: dict[str, object]) -> dict[str, JsonScalar]:

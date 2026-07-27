@@ -23,7 +23,7 @@ import re
 import sys
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -39,11 +39,16 @@ _SMOKE_SESSION: str = "tokenjuice-smoke-session"
 class _SmokeHost:
     """Minimal Hermes-like host that exposes the registration surfaces."""
 
+    config: dict[str, object]
+    hooks: dict[str, Callable[..., str | None]]
+    middlewares: dict[str, Callable[..., object]]
+    tools: dict[str, Callable[..., object]]
+
     def __init__(self, config: dict[str, object]) -> None:
         self.config = config
-        self.hooks: dict[str, Callable[..., str | None]] = {}
-        self.middlewares: dict[str, Callable[..., object]] = {}
-        self.tools: dict[str, Callable[..., object]] = {}
+        self.hooks = {}
+        self.middlewares = {}
+        self.tools = {}
 
     def register_hook(self, name: str, callback: Callable[..., str | None]) -> None:
         self.hooks[name] = callback
@@ -139,15 +144,11 @@ def _run_status(host: _SmokeHost) -> tuple[bool, dict[str, JsonValue], str]:
         return False, {}, "tokenjuice_status returned non-string"
 
     try:
-        parsed = json.loads(status_text)
+        parsed = cast("dict[str, JsonValue]", json.loads(status_text))
     except json.JSONDecodeError as exc:
         return False, {}, f"status JSON decode failed: {exc}"
-    if not isinstance(parsed, dict):
-        return False, {}, "tokenjuice_status returned non-object JSON"
 
-    snapshot = {str(key): value for key, value in parsed.items()}
-
-    return True, snapshot, ""
+    return True, parsed, ""
 
 
 def _print_safe_summary(
@@ -269,7 +270,7 @@ def main() -> int:
                 register, str(tmp_path)
             )
 
-    temp_store_removed = tmp_path is not None and not tmp_path.exists()
+    temp_store_removed = not tmp_path.exists()
 
     _print_safe_summary(
         import_ok=import_ok,

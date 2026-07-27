@@ -25,6 +25,8 @@ from tokenjuice_hermes.rescue_store import BlobStore
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from tokenjuice_hermes.structured_pruning_types import Contribution
+
 
 @pytest.fixture(autouse=True)
 def _reset_counters() -> None:  # pyright: ignore[reportUnusedFunction]
@@ -315,3 +317,108 @@ def test_status_tool_degrades_on_hook_only_host() -> None:
 
     # Then: registration succeeds but no status tool is emitted.
     assert not hasattr(host, "tools")
+
+
+class TestStructuredPruningObservability:
+    def test_structured_pruning_records_aggregate_counters(self) -> None:
+        # Given: a structured pruning event with sensitive details in redacted metadata.
+        from tokenjuice_hermes.observability import record_structured_pruning  # noqa: PLC0415
+
+        reset_stats()
+
+        # When: the policy records a structured prune.
+        record_structured_pruning(
+            pruned_count=2,
+            saved_tokens=1234,
+            phase="pre_api",
+            redacted=[
+                {
+                    "id": "SECRET_DO_NOT_LEAK",
+                    "class": "terminal_tool_output",
+                    "session_id": "session-secret",
+                    "private_path": "/private/example",
+                    "raw_content": "RAW_SECRET_CONTENT_999",
+                }
+            ],
+        )
+
+        # Then: only aggregate counters appear in status; no raw content/ids/paths/sessions.
+        status = _status_dict()
+        assert status["structured_pruning_count"] == 2
+        assert status["structured_pruning_saved_tokens"] == 1234
+        text = json.dumps(status)
+        forbidden = {
+            "SECRET_DO_NOT_LEAK",
+            "session-secret",
+            "/private/example",
+            "RAW_SECRET_CONTENT_999",
+        }
+        assert not any(token in text for token in forbidden)
+
+    def test_structured_pruning_counters_fail_open(self) -> None:
+        # Given: a stats recorder that raises during structured pruning accounting.
+        from tokenjuice_hermes import observability  # noqa: PLC0415
+
+        reset_stats()
+
+        cfg = {
+            "tokenjuice_prompt_pruning_enabled": True,
+            "tokenjuice_prompt_pruning_threshold_tokens": 10000,
+            "tokenjuice_prompt_pruning_trigger_ratio": 80,
+            "tokenjuice_prompt_pruning_target_ratio": 75,
+            "tokenjuice_prompt_pruning_soft_target_ratio": 75,
+            "tokenjuice_prompt_pruning_hard_target_ratio": 65,
+            "tokenjuice_prompt_pruning_min_saved_tokens": 256,
+            "tokenjuice_prompt_pruning_cache_ttl_seconds": 3600,
+            "tokenjuice_prompt_pruning_protect_recent_messages": 0,
+            "tokenjuice_prompt_pruning_protect_recent_tool_interactions": 0,
+            "tokenjuice_prompt_pruning_classes": "terminal_tool_output",
+            "tokenjuice_prompt_pruning_accounting_enabled": True,
+        }
+
+        def _explode(*_args: object, **_kwargs: object) -> None:
+            raise RuntimeError
+
+        threshold = cfg["tokenjuice_prompt_pruning_threshold_tokens"]
+        min_saved = cfg["tokenjuice_prompt_pruning_min_saved_tokens"]
+        assert isinstance(threshold, int)
+        assert isinstance(min_saved, int)
+        token_estimate = threshold
+        char_count = token_estimate * 4
+        original = observability.record_structured_pruning
+        observability.record_structured_pruning = _explode
+        try:
+            # When: pruning would record accounting but the recorder raises.
+            from tokenjuice_hermes.structured_pruning import (  # noqa: PLC0415
+                prune_structured_context,
+            )
+
+            disposable: Contribution = {
+                "id": "d1",
+                "kind": "message",
+                "provenance": "conversation_history",
+                "class": "terminal_tool_output",
+                "stability": "volatile",
+                "cache_scope": "body",
+                "token_estimate": token_estimate,
+                "char_count": char_count,
+                "content_hash": "a" * 64,
+                "atomic_group_id": None,
+                "prune_policy": "hard_clear_allowed",
+                "protected_reason": "",
+                "created_at_epoch_ms": 0,
+                "content": "x" * char_count,
+                "tool_calls": [],
+            }
+            result = prune_structured_context(
+                [disposable],
+                current_pressure_tokens=threshold + min_saved,
+                threshold_tokens=threshold,
+                **cfg,
+            )
+        finally:
+            observability.record_structured_pruning = original
+
+        # Then: the policy still returns a sane result rather than crashing.
+        assert result is not None
+        assert result["effective_contributions"] == []

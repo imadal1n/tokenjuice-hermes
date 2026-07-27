@@ -16,9 +16,9 @@ ToolCallback: TypeAlias = Callable[..., JsonValue | None]
 class HookOnlyHost:
     def __init__(self) -> None:
         self.hooks: list[str] = []
-        self.callbacks: dict[str, Callable[..., str | None]] = {}
+        self.callbacks: dict[str, Callable[..., JsonValue | None]] = {}
 
-    def register_hook(self, name: str, callback: Callable[..., str | None]) -> None:
+    def register_hook(self, name: str, callback: Callable[..., JsonValue | None]) -> None:
         self.callbacks[name] = callback
         self.hooks.append(name)
 
@@ -86,8 +86,10 @@ def web_result(content: str) -> str:
     return json.dumps({"content": content})
 
 
-def extract_hex_handle(text: str) -> str | None:
-    match = re.search(r"\b[0-9a-f]{12}\b", text)
+def extract_hex_handle(value: JsonValue | None) -> str | None:
+    if not isinstance(value, str):
+        return None
+    match = re.search(r"\b[0-9a-f]{12}\b", value)
     return match.group(0) if match else None
 
 
@@ -115,7 +117,7 @@ class _HermesHostBase:
         self.config: dict[str, JsonValue] = dict(config) if config else {}
         self.session_id = session_id
         self.hooks: list[str] = []
-        self.callbacks: dict[str, Callable[..., str | None]] = {}
+        self.callbacks: dict[str, Callable[..., JsonValue | None]] = {}
         self.tools: dict[str, ToolCallback] = {}
         self.middlewares: dict[str, MiddlewareCallback] = {}
         self._tool_registration_error = tool_registration_error
@@ -146,7 +148,7 @@ class _HermesHostBase:
         tool_name: str = "",
         session_id: str | None = None,
         **extra: JsonValue,
-    ) -> str | None:
+    ) -> JsonValue | None:
         """Invoke a registered hook callback as a Hermes host would."""
         callback = self.callbacks[name]
         scalar_extra = {key: value for key, value in extra.items() if isinstance(value, JsonScalar)}
@@ -189,7 +191,7 @@ class _HermesHostBase:
 class HermesHost(_HermesHostBase):
     """Realistic Hermes-like host with hook, tool, and middleware surfaces."""
 
-    def register_hook(self, name: str, callback: Callable[..., str | None]) -> None:
+    def register_hook(self, name: str, callback: Callable[..., JsonValue | None]) -> None:
         self.callbacks[name] = callback
         self.hooks.append(name)
 
@@ -207,7 +209,7 @@ class HermesHost(_HermesHostBase):
 class HermesRegistryHost(_HermesHostBase):
     """Hermes host fixture using the real PluginContext.register_tool shape."""
 
-    def register_hook(self, name: str, callback: Callable[..., str | None]) -> None:
+    def register_hook(self, name: str, callback: Callable[..., JsonValue | None]) -> None:
         self.callbacks[name] = callback
         self.hooks.append(name)
 
@@ -235,7 +237,7 @@ class HermesRegistryHost(_HermesHostBase):
 class HermesToollessHost(_HermesHostBase):
     """Hermes-like host with hook and middleware surfaces but no tool surface."""
 
-    def register_hook(self, name: str, callback: Callable[..., str | None]) -> None:
+    def register_hook(self, name: str, callback: Callable[..., JsonValue | None]) -> None:
         self.callbacks[name] = callback
         self.hooks.append(name)
 
@@ -248,7 +250,7 @@ class HermesToollessHost(_HermesHostBase):
 class HermesMiddlewarelessHost(_HermesHostBase):
     """Hermes-like host with hook and tool surfaces but no middleware surface."""
 
-    def register_hook(self, name: str, callback: Callable[..., str | None]) -> None:
+    def register_hook(self, name: str, callback: Callable[..., JsonValue | None]) -> None:
         self.callbacks[name] = callback
         self.hooks.append(name)
 

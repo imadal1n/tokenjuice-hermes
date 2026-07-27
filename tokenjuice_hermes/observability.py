@@ -36,6 +36,8 @@ class _Counters:
         "passref_truncated_count",
         "rescue_chars_saved",
         "rescue_count",
+        "structured_pruning_count",
+        "structured_pruning_saved_tokens",
     )
 
     def __init__(self) -> None:
@@ -51,6 +53,8 @@ class _Counters:
         self.passref_truncated_count: int = 0
         self.passref_budget_exceeded_count: int = 0
         self.passref_chars_expanded: int = 0
+        self.structured_pruning_count: int = 0
+        self.structured_pruning_saved_tokens: int = 0
 
 
 _COUNTERS: Final[_Counters] = _Counters()
@@ -70,6 +74,8 @@ def reset_stats() -> None:
     _COUNTERS.passref_truncated_count = 0
     _COUNTERS.passref_budget_exceeded_count = 0
     _COUNTERS.passref_chars_expanded = 0
+    _COUNTERS.structured_pruning_count = 0
+    _COUNTERS.structured_pruning_saved_tokens = 0
 
 
 def record_compaction(chars_saved: int) -> None:
@@ -125,6 +131,27 @@ def record_passref_budget_exceeded() -> None:
     """Record a passref expansion that hit the total budget marker."""
     with contextlib.suppress(Exception):
         _COUNTERS.passref_budget_exceeded_count += 1
+
+
+def record_structured_pruning(
+    *,
+    pruned_count: int,
+    saved_tokens: int,
+    phase: str = "",
+    redacted: list[dict[str, object]] | None = None,
+) -> None:
+    """Record aggregate structured pruning counters.
+
+    The ``redacted`` argument is accepted for caller convenience but is never
+    stored or returned in status; only aggregate counts cross the boundary.
+    """
+    _ = phase
+    _ = redacted
+    with contextlib.suppress(Exception):
+        if pruned_count > 0:
+            _COUNTERS.structured_pruning_count += pruned_count
+        if saved_tokens > 0:
+            _COUNTERS.structured_pruning_saved_tokens += saved_tokens
 
 
 def _count_index_entries(meta_dir: Path) -> tuple[int, int]:
@@ -211,6 +238,8 @@ def status_snapshot(store_path: str = "") -> dict[str, object]:
         "passref_truncated_count": _COUNTERS.passref_truncated_count,
         "passref_budget_exceeded_count": _COUNTERS.passref_budget_exceeded_count,
         "passref_chars_expanded": _COUNTERS.passref_chars_expanded,
+        "structured_pruning_count": _COUNTERS.structured_pruning_count,
+        "structured_pruning_saved_tokens": _COUNTERS.structured_pruning_saved_tokens,
         "store": store_stats,
     }
 

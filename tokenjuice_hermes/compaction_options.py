@@ -45,6 +45,18 @@ OPTION_KEYS: Final[frozenset[str]] = frozenset(
         "tokenjuice_passref_enabled",
         "tokenjuice_passref_max_chars",
         "tokenjuice_passref_total_max_chars",
+        "tokenjuice_prompt_pruning_enabled",
+        "tokenjuice_prompt_pruning_threshold_tokens",
+        "tokenjuice_prompt_pruning_trigger_ratio",
+        "tokenjuice_prompt_pruning_target_ratio",
+        "tokenjuice_prompt_pruning_soft_target_ratio",
+        "tokenjuice_prompt_pruning_hard_target_ratio",
+        "tokenjuice_prompt_pruning_min_saved_tokens",
+        "tokenjuice_prompt_pruning_cache_ttl_seconds",
+        "tokenjuice_prompt_pruning_protect_recent_messages",
+        "tokenjuice_prompt_pruning_protect_recent_tool_interactions",
+        "tokenjuice_prompt_pruning_classes",
+        "tokenjuice_prompt_pruning_accounting_enabled",
     }
 )
 

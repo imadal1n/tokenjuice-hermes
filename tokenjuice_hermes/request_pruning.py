@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Final, TypeAlias
 
 from .json_types import JsonValue, is_error_payload, parse_flat_json_object
+from .structured_pruning import STRUCTURED_PRUNING_MARKER
 
 RequestObject: TypeAlias = dict[str, JsonValue]
 MessageObject: TypeAlias = dict[str, JsonValue]
@@ -103,22 +104,34 @@ def _prune_message(
     protected_tool_indexes: frozenset[int],
     index: int,
 ) -> tuple[MessageObject, bool]:
-    if index in protected_tool_indexes or message.get("role") != "tool":
+    if not _is_eligible_tool_message(message, protected_tool_indexes, index):
         return message, False
 
     name = message.get("name")
     content = message.get("content")
     if not isinstance(name, str) or not isinstance(content, str):
         return message, False
-    if name in PROTECTED_TOOL_NAMES or name not in PRUNABLE_TOOL_NAMES:
-        return message, False
-    if _is_diagnostic_payload(content):
-        return message, False
-
     compacted = _compact_text(content)
     if compacted == content:
         return message, False
     return {**message, "content": compacted}, True
+
+
+def _is_eligible_tool_message(
+    message: MessageObject,
+    protected_tool_indexes: frozenset[int],
+    index: int,
+) -> bool:
+    if index in protected_tool_indexes or message.get("role") != "tool":
+        return False
+
+    name = message.get("name")
+    content = message.get("content")
+    if not isinstance(name, str) or not isinstance(content, str):
+        return False
+    if name in PROTECTED_TOOL_NAMES or name not in PRUNABLE_TOOL_NAMES:
+        return False
+    return STRUCTURED_PRUNING_MARKER not in content and not _is_diagnostic_payload(content)
 
 
 def _is_diagnostic_payload(text: str) -> bool:

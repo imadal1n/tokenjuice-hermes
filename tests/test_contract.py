@@ -22,7 +22,7 @@ JsonScalar: TypeAlias = None | bool | int | float | str
 JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
 FlatJsonObject: TypeAlias = dict[str, JsonScalar]
 TerminalJsonObject: TypeAlias = dict[str, JsonValue]
-HookCallback: TypeAlias = Callable[..., str | None]
+HookCallback: TypeAlias = Callable[..., JsonValue | None]
 ToolCallback: TypeAlias = Callable[..., JsonValue | None]
 ToolRequestCallback: TypeAlias = Callable[..., dict[str, JsonValue] | None]
 
