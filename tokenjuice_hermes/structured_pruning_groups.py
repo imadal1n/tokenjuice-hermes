@@ -273,10 +273,10 @@ def _is_ttl_protected(
 ) -> bool:
     if now_ms is None or contribution.created_at_epoch_ms is None:
         return False
-    is_prune_candidate = (
-        contribution.class_ in config.classes
-        and contribution.prune_policy in {SOFT_TRIM_POLICY, HARD_CLEAR_POLICY}
-    )
+    is_prune_candidate = contribution.class_ in config.classes and contribution.prune_policy in {
+        SOFT_TRIM_POLICY,
+        HARD_CLEAR_POLICY,
+    }
     is_cache_stable = (
         contribution.stability in STABLE_STABILITIES
         and contribution.cache_scope in PREFIX_CACHE_SCOPES
