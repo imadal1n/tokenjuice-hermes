@@ -987,8 +987,8 @@ class TestStructuredPruningHermesSeam:
             assert found_terminal
 
     def test_hermes_seam_returns_none_when_pressure_cannot_be_derived(self) -> None:
-        # Given: no current_pressure_tokens, no threshold_tokens, no context_length,
-        # and no contribution estimates from which to derive pressure.
+        # Given: no current_pressure_tokens and no contribution estimates from which
+        # to derive true request pressure.
         host = HermesHost(config=cast("dict[str, JsonValue]", _STRUCTURED_PRUNING_TEST_CONFIG))
         register(host)
         callback = host.callbacks["structured_context_prune"]
@@ -1004,7 +1004,7 @@ class TestStructuredPruningHermesSeam:
             content="",
         )
 
-        # When: the seam context is missing every pressure/threshold signal.
+        # When: the seam context has threshold but no usable pressure signal.
         result = callback(
             [empty],
             phase="pre_api",
@@ -1012,5 +1012,40 @@ class TestStructuredPruningHermesSeam:
         )
 
         # Then: fail-open by returning None.
+        assert result is None
+
+    def test_hermes_seam_ignores_context_length_as_pressure(self) -> None:
+        # Given: a huge Hermes context_length but tiny real contribution estimates.
+        cfg = dict(_STRUCTURED_PRUNING_TEST_CONFIG)
+        cfg["tokenjuice_prompt_pruning_protect_recent_messages"] = 0
+        host = HermesHost(config=cast("dict[str, JsonValue]", cfg))
+        register(host)
+        callback = host.callbacks["structured_context_prune"]
+        threshold = cfg["tokenjuice_prompt_pruning_threshold_tokens"]
+        assert isinstance(threshold, int)
+
+        small_terminal = _contribution(
+            contribution_id="small-terminal",
+            kind="message",
+            provenance="conversation_history",
+            class_="terminal_tool_output",
+            stability="volatile",
+            token_estimate=10,
+            prune_policy="hard_clear_allowed",
+            content="tiny output",
+        )
+
+        # When: the seam passes a large context_length (model capacity), not pressure.
+        result = callback(
+            [small_terminal],
+            phase="pre_api",
+            context_length=1_000_000,
+            threshold_tokens=threshold,
+            trigger_tokens=int(threshold * 0.8),
+            target_tokens=int(threshold * 0.75),
+            tool_schema_tokens=0,
+        )
+
+        # Then: fail-open because true request pressure is tiny; context_length is not pressure.
         assert result is None
 

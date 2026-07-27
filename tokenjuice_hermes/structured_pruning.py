@@ -124,7 +124,7 @@ def _prepare_prune(
         return None
 
     pressure = _resolve_pressure(parsed_contributions, current_pressure_tokens, context)
-    if pressure < 0:
+    if pressure is None or pressure < 0:
         return None
 
     trigger_tokens = _resolve_trigger(context, config, effective_threshold)
@@ -158,17 +158,16 @@ def _resolve_pressure(
     parsed_contributions: tuple[ContributionInternal, ...],
     current_pressure_tokens: int | None,
     context: dict[str, JsonValue],
-) -> int:
+) -> int | None:
+    """Derive current request pressure from explicit data or contribution estimates."""
     if current_pressure_tokens is not None:
-        return current_pressure_tokens
-    context_length = _int_context(context, "context_length")
-    if context_length is not None and context_length > 0:
-        return context_length
+        return current_pressure_tokens if current_pressure_tokens >= 0 else None
     tool_schema_tokens = _int_context(context, "tool_schema_tokens") or 0
     message_tokens = sum(
         c.token_estimate for c in parsed_contributions if c.kind != "tool_schema"
     )
-    return message_tokens + tool_schema_tokens
+    pressure = message_tokens + tool_schema_tokens
+    return pressure if pressure > 0 else None
 
 
 def _resolve_trigger(
