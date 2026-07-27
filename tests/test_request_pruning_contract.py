@@ -439,7 +439,7 @@ class TestStructuredPruningPolicy:
         )
         current_pressure = threshold + min_saved
         result = _prune_structured_context(
-            [young_prunable, old_disposable],
+            [old_disposable, young_prunable],
             current_pressure_tokens=current_pressure,
             threshold_tokens=threshold,
             **cfg,
@@ -484,7 +484,7 @@ class TestStructuredPruningPolicy:
         )
 
         result = _prune_structured_context(
-            [young_terminal, old_terminal],
+            [old_terminal, young_terminal],
             current_pressure_tokens=threshold + min_saved,
             threshold_tokens=threshold,
             **cfg,
@@ -1160,14 +1160,12 @@ class TestStructuredPruningHermesSeam:
         assert result["effective_system_prompt"] == ""
 
         effective_tools = result["effective_tools"]
-        if isinstance(effective_tools, list):
-            found_terminal = False
-            for t in effective_tools:
-                function = t.get("function")
-                if isinstance(function, dict) and function.get("name") == "terminal":
-                    found_terminal = True
-                    break
-            assert found_terminal
+        assert effective_tools == [
+            {
+                "type": "function",
+                "function": {"name": "terminal", "description": "Run shell commands"},
+            }
+        ]
 
     def test_hermes_seam_preserves_provider_messages_exactly(self) -> None:
         cfg = dict(_STRUCTURED_PRUNING_TEST_CONFIG)
