@@ -4,9 +4,9 @@ import hashlib
 import json
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, TypeAlias
+from typing import TYPE_CHECKING, TypeAlias, cast
 
-from tests.host_fixtures import HookOnlyHost, MiddlewareHost
+from tests.host_fixtures import HermesHost, HookOnlyHost, MiddlewareHost
 from tokenjuice_hermes.json_types import JsonValue, parse_json
 from tokenjuice_hermes.plugin import register
 
@@ -858,3 +858,159 @@ def test_llm_request_fails_open_on_invalid_request_shape() -> None:
 
     # Then: invalid input fails open without forcing a rewrite.
     assert result is None or result == invalid_request
+
+
+class TestStructuredPruningHermesSeam:
+    """Contract tests that mirror the Hermes agent/context_pruning seam."""
+
+    def test_register_adds_structured_pruning_hook_when_enabled(self) -> None:
+        # Given: a host with structured pruning enabled in its config.
+        host = HermesHost(config=cast("dict[str, JsonValue]", _STRUCTURED_PRUNING_TEST_CONFIG))
+
+        # When: the plugin registers itself.
+        register(host)
+
+        # Then: the structured_context_prune hook is registered.
+        assert "structured_context_prune" in host.hooks
+
+    def test_hermes_seam_prunes_without_current_pressure_tokens(self) -> None:
+        # Given: Hermes seam context fields but no current_pressure_tokens.
+        cfg = dict(_STRUCTURED_PRUNING_TEST_CONFIG)
+        cfg["tokenjuice_prompt_pruning_protect_recent_messages"] = 0
+        cfg["tokenjuice_prompt_pruning_protect_recent_tool_interactions"] = 0
+        host = HermesHost(config=cast("dict[str, JsonValue]", cfg))
+        register(host)
+        callback = host.callbacks["structured_context_prune"]
+        threshold = cfg["tokenjuice_prompt_pruning_threshold_tokens"]
+        assert isinstance(threshold, int)
+        trigger_ratio = cfg["tokenjuice_prompt_pruning_trigger_ratio"]
+        assert isinstance(trigger_ratio, int)
+        target_ratio = cfg["tokenjuice_prompt_pruning_target_ratio"]
+        assert isinstance(target_ratio, int)
+
+        system_part = _contribution(
+            contribution_id="system",
+            kind="system_part",
+            provenance="system_prompt",
+            class_="system_instruction",
+            stability="stable_prefix",
+            token_estimate=100,
+            prune_policy="never",
+            content="system instruction",
+        )
+        user = _contribution(
+            contribution_id="user",
+            kind="message",
+            provenance="conversation_history",
+            class_="user_message",
+            stability="session_stable",
+            token_estimate=50,
+            prune_policy="never",
+            content="user question",
+        )
+        old_terminal = _contribution(
+            contribution_id="old-terminal",
+            kind="tool_interaction",
+            provenance="conversation_history",
+            class_="terminal_tool_output",
+            stability="volatile",
+            token_estimate=threshold,
+            prune_policy="hard_clear_allowed",
+            content="old tool output",
+            age_seconds=60,
+        )
+        terminal_tool = json.dumps({
+            "type": "function",
+            "function": {"name": "terminal", "description": "Run shell commands"},
+        })
+        tool_schema = _contribution(
+            contribution_id="tool-schema-0",
+            kind="tool_schema",
+            provenance="tool_schema",
+            class_="tool_schema",
+            stability="stable_prefix",
+            token_estimate=100,
+            prune_policy="never",
+            content=terminal_tool,
+        )
+        contributions = [system_part, user, old_terminal, tool_schema]
+        tool_schema_tokens = 100
+
+        # When: the hook is invoked exactly as Hermes does (no current_pressure_tokens).
+        raw_result = callback(
+            contributions,
+            phase="pre_api",
+            session_id="session-a",
+            turn_id="turn-1",
+            api_request_id="",
+            task_id="task-1",
+            model="test-model",
+            provider="test-provider",
+            api_mode="chat",
+            compression_enabled=True,
+            context_length=0,
+            threshold_tokens=threshold,
+            trigger_tokens=int(threshold * trigger_ratio / 100),
+            target_tokens=int(threshold * target_ratio / 100),
+            tool_schema_tokens=tool_schema_tokens,
+            now_epoch_ms=_DETERMINISTIC_EPOCH_MS,
+        )
+
+        # Then: a valid result is returned, effective_messages are provider-shaped,
+        # the old terminal output is pruned, and the system/user/tool schema remain.
+        assert isinstance(raw_result, dict)
+        result = cast("StructuredPruningResult", cast("object", raw_result))
+        effective_messages = result["effective_messages"]
+        assert len(effective_messages) > 0
+        message_contents: set[str] = set()
+        for message in effective_messages:
+            assert isinstance(message, dict)
+            assert "role" in message
+            assert "content" in message
+            assert "id" not in message
+            assert "class" not in message
+            content = message.get("content")
+            assert isinstance(content, str)
+            message_contents.add(content)
+        assert "old tool output" not in message_contents
+        assert "system instruction" in message_contents
+        assert "user question" in message_contents
+
+        effective_tools = result["effective_tools"]
+        if isinstance(effective_tools, list):
+            found_terminal = False
+            for t in effective_tools:
+                function = t.get("function")
+                if isinstance(function, dict) and function.get("name") == "terminal":
+                    found_terminal = True
+                    break
+            assert found_terminal
+
+    def test_hermes_seam_returns_none_when_pressure_cannot_be_derived(self) -> None:
+        # Given: no current_pressure_tokens, no threshold_tokens, no context_length,
+        # and no contribution estimates from which to derive pressure.
+        host = HermesHost(config=cast("dict[str, JsonValue]", _STRUCTURED_PRUNING_TEST_CONFIG))
+        register(host)
+        callback = host.callbacks["structured_context_prune"]
+
+        empty = _contribution(
+            contribution_id="empty",
+            kind="system_part",
+            provenance="system_prompt",
+            class_="system_instruction",
+            stability="stable_prefix",
+            token_estimate=0,
+            prune_policy="never",
+            content="",
+        )
+
+        # When: the seam context is missing every pressure/threshold signal.
+        result = callback(
+            [empty],
+            phase="pre_api",
+            threshold_tokens=None,
+        )
+
+        # Then: fail-open by returning None.
+        assert result is None
+

@@ -78,8 +78,8 @@ class StructuredPruningResult(TypedDict):
     """Effective pruned prompt view plus redacted accounting."""
 
     effective_contributions: list[Contribution]
-    effective_messages: list[Contribution]
-    effective_tools: list[Contribution]
+    effective_messages: list[dict[str, JsonValue]]
+    effective_tools: list[dict[str, JsonValue]] | None
     accounting: StructuredPruningAccounting
 
 

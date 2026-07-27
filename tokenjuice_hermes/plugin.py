@@ -107,8 +107,8 @@ def _try_register_structured_pruning_hook(
     def _structured_context_prune(
         contributions: Sequence[Contribution],
         *,
-        current_pressure_tokens: int,
-        threshold_tokens: int,
+        current_pressure_tokens: int | None = None,
+        threshold_tokens: int | None = None,
         **kwargs: JsonValue,
     ) -> dict[str, JsonValue] | None:
         merged_config = {**config, **kwargs}
