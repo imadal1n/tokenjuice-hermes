@@ -9,11 +9,9 @@ from .structured_pruning_types import (
     DEFAULT_CACHE_TTL_SECONDS,
     DEFAULT_CLASSES,
     DEFAULT_ENABLED,
-    DEFAULT_HARD_TARGET_RATIO,
     DEFAULT_MIN_SAVED_TOKENS,
     DEFAULT_PROTECT_RECENT_MESSAGES,
     DEFAULT_PROTECT_RECENT_TOOL_INTERACTIONS,
-    DEFAULT_SOFT_TARGET_RATIO,
     DEFAULT_TARGET_RATIO,
     DEFAULT_TRIGGER_RATIO,
     PruningConfig,
@@ -73,11 +71,12 @@ def _parse_config(context: dict[str, JsonValue]) -> PruningConfig:
     target_ratio = _parse_ratio(
         context, TOKENJUICE_PROMPT_PRUNING_TARGET_RATIO, DEFAULT_TARGET_RATIO
     )
+    phase_target_default = target_ratio if target_ratio is not None else DEFAULT_TARGET_RATIO
     soft_target_ratio = _parse_ratio(
-        context, TOKENJUICE_PROMPT_PRUNING_SOFT_TARGET_RATIO, DEFAULT_SOFT_TARGET_RATIO
+        context, TOKENJUICE_PROMPT_PRUNING_SOFT_TARGET_RATIO, phase_target_default
     )
     hard_target_ratio = _parse_ratio(
-        context, TOKENJUICE_PROMPT_PRUNING_HARD_TARGET_RATIO, DEFAULT_HARD_TARGET_RATIO
+        context, TOKENJUICE_PROMPT_PRUNING_HARD_TARGET_RATIO, phase_target_default
     )
     min_saved_tokens = _parse_nonnegative_int(
         context, TOKENJUICE_PROMPT_PRUNING_MIN_SAVED_TOKENS, DEFAULT_MIN_SAVED_TOKENS

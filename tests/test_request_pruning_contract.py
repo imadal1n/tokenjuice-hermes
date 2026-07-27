@@ -901,6 +901,43 @@ class TestStructuredPruningPolicy:
         assert hard_result is not None
         assert hard_candidate["id"] not in {c["id"] for c in hard_result["effective_contributions"]}
 
+    def test_target_ratio_backfills_omitted_phase_target_ratios(self) -> None:
+        cfg = {
+            key: value
+            for key, value in _STRUCTURED_PRUNING_TEST_CONFIG.items()
+            if key
+            not in {
+                "tokenjuice_prompt_pruning_soft_target_ratio",
+                "tokenjuice_prompt_pruning_hard_target_ratio",
+            }
+        }
+        cfg["tokenjuice_prompt_pruning_protect_recent_messages"] = 0
+        cfg["tokenjuice_prompt_pruning_protect_recent_tool_interactions"] = 0
+        cfg["tokenjuice_prompt_pruning_target_ratio"] = 90
+        cfg["tokenjuice_prompt_pruning_min_saved_tokens"] = 1
+        threshold = cfg["tokenjuice_prompt_pruning_threshold_tokens"]
+        assert isinstance(threshold, int)
+
+        candidate = _contribution(
+            contribution_id="fallback-target-candidate",
+            kind="tool_interaction",
+            provenance="conversation_history",
+            class_="terminal_tool_output",
+            stability="turn_ephemeral",
+            token_estimate=1200,
+            prune_policy="hard_clear_allowed",
+            content="h" * 1200,
+        )
+        result = _prune_structured_context(
+            [candidate],
+            current_pressure_tokens=threshold,
+            threshold_tokens=threshold,
+            **cfg,
+        )
+
+        assert result is not None
+        assert candidate["id"] not in {c["id"] for c in result["effective_contributions"]}
+
     def test_default_classes_only_terminal_tool_output(self) -> None:
         cfg = dict(_STRUCTURED_PRUNING_TEST_CONFIG)
         cfg["tokenjuice_prompt_pruning_protect_recent_messages"] = 0
