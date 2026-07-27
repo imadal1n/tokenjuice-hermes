@@ -41,10 +41,9 @@ def test_smoke_script_never_writes_to_live_rescue_store(smoke_script: Path) -> N
     assert "mkdir" not in text or _LIVE_RESCUE_STORE not in text
 
 
-def test_smoke_script_contains_no_transport_api_or_secrets_access(smoke_script: Path) -> None:
+def test_smoke_script_contains_no_chat_api_or_secrets_access(smoke_script: Path) -> None:
     text = smoke_script.read_text(encoding="utf-8").lower()
     unsafe_access_patterns = [
-        "chat",
         "chat",
         "api_key",
         "apikey",

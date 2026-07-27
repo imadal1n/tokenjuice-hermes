@@ -3,7 +3,7 @@
 This script is intended to be run inside the Hermes container after a host
 rebuild, for example:
 
-    docker exec -i -u 1000:100 <hermes-container> python < runtime_smoke.py
+    docker exec -i -u 1000:100 <container> python < runtime_smoke.py
 
 It loads the mounted plugin from /opt/data/plugins/tokenjuice-hermes, verifies
 that register() is callable, creates a temporary throwaway BlobStore, exercises

@@ -142,18 +142,17 @@ Build the Python package artifacts with:
 uv build
 ```
 
-## deployment target deployment source
+## Deployment Source
 
-`<source-checkout>` on the `main` branch is the canonical
-source for the deployment target Hermes deployment. The Nix package expression at
-`<downstream-package-expression>` builds the revision
-locked from that repository and compares it with the downstream package source package mirror
-during `checkPhase`.
+This repository's `main` branch is the canonical source for package-based
+deployments. Downstream package definitions should build a locked revision from
+this repository and, when they carry a vendored mirror, compare that mirror during
+their package check phase.
 
-Make TokenJuice behavior changes here first, keep the downstream package source mirror
-byte-for-byte aligned in the same task, and run the Nix package build before an
-operator applies the host configuration. Do not edit the deployed plugin mount
-or the Nix store directly.
+Make TokenJuice behavior changes here first, keep downstream mirrors
+byte-for-byte aligned in the same task, and run the downstream package build
+before applying host configuration. Do not edit deployed plugin mounts or package
+store paths directly.
 
 The standalone repository also includes a GitHub Actions workflow that runs the
 same checks on Python 3.11, 3.12, and 3.13.
@@ -162,15 +161,16 @@ same checks on Python 3.11, 3.12, and 3.13.
 
 After the host is rebuilt, `scripts/runtime_smoke.py` can prove the mounted
 plugin loads and exercises rescue/fetch/status through a temporary throwaway
-store. It never sends messages to the agent/chat channel, writes to the live rescue store,
-or reads secrets. Output is limited to safe booleans and aggregate counts.
+store. It never sends messages to external chat channels, writes to the live
+rescue store, or reads secrets. Output is limited to safe booleans and aggregate
+counts.
 
 ```bash
-docker exec -i -u 1000:100 <hermes-container> python < scripts/runtime_smoke.py
+docker exec -i -u 1000:100 <container> python < scripts/runtime_smoke.py
 ```
 
-The smoke script is a post-`rebuild` operator verification step, not a substitute for
-unit tests or source-level safety checks.
+The smoke script is a post-rebuild operator verification step, not a substitute
+for unit tests or source-level safety checks.
 
 ## Non-Goals
 

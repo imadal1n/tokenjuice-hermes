@@ -170,7 +170,7 @@ The plugin uses only the Python standard library at runtime.
 
 ## Runtime Smoke
 
-`scripts/runtime_smoke.py` is a post-`rebuild` operator verification script. It loads
+`scripts/runtime_smoke.py` is a post-rebuild operator verification script. It loads
 the mounted plugin from `/opt/data/plugins/tokenjuice-hermes` (override with
 `TOKENJUICE_SMOKE_PLUGIN_PATH`), verifies that `register()` is callable, creates
 a temporary throwaway `BlobStore`, exercises rescue/fetch/status through the
@@ -179,7 +179,7 @@ plugin, and removes the temporary store.
 The smoke script:
 
 - uses a temporary directory, never `/opt/data/tokenjuice-hermes/rescue-blobs`;
-- does not send messages to the agent, chat channel, chat channel, or any real chat channel;
+- does not send messages to external chat channels;
 - does not read secrets, edit live config, or mutate live store contents;
 - prints only safe booleans and aggregate counts.
 
@@ -191,5 +191,5 @@ This package does not activate itself. Live Hermes behavior depends on the targe
 profile enabling the plugin, mounting a writable rescue store for rescue, and
 optionally enabling passref or structured pruning with explicit kwargs.
 
-Activation requires `rebuild`/rebuild and/or container recreate in deployments that
+Activation requires a rebuild and/or container recreate in deployments that
 derive runtime state from Nix. Those operator steps are outside this package.

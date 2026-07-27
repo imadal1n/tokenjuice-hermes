@@ -69,8 +69,7 @@ These names are never passref-expanded, even if listed in the allowlist:
 - Using `llm_request` fallback as proof that Hermes compression was delayed.
 - Making `read_file` configurable or compactable.
 - Vendoring Toolaria or depending on it at runtime.
-- Sending synthetic messages through the agent, chat channel, chat channel, or any real chat
-  channel as a proof step.
+- Sending synthetic messages through any real chat channel as a proof step.
 - Writing to the live rescue store during runtime smoke or verification.
 
 Deployment wrappers should keep activation, passref enablement, and allowlist
