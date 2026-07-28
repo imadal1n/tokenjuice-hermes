@@ -119,6 +119,7 @@ class _HermesHostBase:
         self.hooks: list[str] = []
         self.callbacks: dict[str, Callable[..., JsonValue | None]] = {}
         self.tools: dict[str, ToolCallback] = {}
+        self.tool_schemas: dict[str, dict[str, object]] = {}
         self.middlewares: dict[str, MiddlewareCallback] = {}
         self._tool_registration_error = tool_registration_error
         self._middleware_registration_error = middleware_registration_error
@@ -224,9 +225,15 @@ class HermesRegistryHost(_HermesHostBase):
         if self._tool_registration_error:
             raise _ToolRegistrationError
         _ = toolset
-        _ = schema
         _ = description
+        self.tool_schemas[name] = schema
         self.tools[name] = handler
+
+    def get_tool_definitions(self) -> list[dict[str, object]]:
+        return [
+            {"type": "function", "function": {**schema, "name": name}}
+            for name, schema in self.tool_schemas.items()
+        ]
 
     def register_middleware(self, name: str, callback: MiddlewareCallback) -> None:
         if self._middleware_registration_error:

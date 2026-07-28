@@ -23,19 +23,25 @@ ToolHandler: TypeAlias = Callable[..., JsonValue | None]
 
 _TOOLSET: str = "tokenjuice-hermes"
 _FETCH_TOOL_SCHEMA: dict[str, object] = {
-    "type": "object",
-    "properties": {
-        "id": {"type": "string"},
-        "mode": {"type": "string", "enum": ["stat", "range", "grep", "full"]},
-        "start": {"type": "integer"},
-        "count": {"type": "integer"},
-        "pattern": {"type": "string"},
+    "description": "Fetch exact content rescued by tokenjuice-hermes.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "id": {"type": "string"},
+            "mode": {"type": "string", "enum": ["stat", "range", "grep", "full"]},
+            "start": {"type": "integer"},
+            "count": {"type": "integer"},
+            "pattern": {"type": "string"},
+        },
+        "required": ["id", "mode"],
     },
-    "required": ["id", "mode"],
 }
 _STATUS_TOOL_SCHEMA: dict[str, object] = {
-    "type": "object",
-    "properties": {},
+    "description": "Return aggregate tokenjuice-hermes rescue status.",
+    "parameters": {
+        "type": "object",
+        "properties": {},
+    },
 }
 
 

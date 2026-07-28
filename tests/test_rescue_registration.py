@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from tests.host_fixtures import (
     FailingToolHost,
@@ -15,6 +15,18 @@ from tokenjuice_hermes.plugin import register
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+def _function_definitions(host: HermesRegistryHost) -> dict[str, dict[str, object]]:
+    result: dict[str, dict[str, object]] = {}
+    for definition in host.get_tool_definitions():
+        function_value = definition["function"]
+        assert isinstance(function_value, dict)
+        function = cast("dict[str, object]", function_value)
+        name_value = function["name"]
+        assert isinstance(name_value, str)
+        result[name_value] = function
+    return result
 
 
 def test_register_adds_rescuer_fetch_on_tool_host() -> None:
@@ -77,6 +89,33 @@ def test_hermes_registry_tools_accept_runtime_context_kwargs(tmp_path: Path) -> 
     assert "web result line 0001" in fetched
     assert isinstance(status, str)
     assert '"version"' in status
+
+
+def test_hermes_registry_tool_definitions_expose_fetch_and_status_parameters() -> None:
+    # Given: the real Hermes register_tool schema capture surface.
+    host = HermesRegistryHost()
+    register(host)
+
+    # When: Hermes serializes registered schemas into model-visible functions.
+    functions = _function_definitions(host)
+    fetch_definition = functions["rescuer_fetch"]
+    status_definition = functions["tokenjuice_status"]
+
+    # Then: rescuer_fetch exposes the handle and fetch mode contract to the model.
+    fetch_parameters = fetch_definition["parameters"]
+    assert isinstance(fetch_parameters, dict)
+    fetch_parameters = cast("dict[str, object]", fetch_parameters)
+    assert fetch_parameters["type"] == "object"
+    assert fetch_parameters["required"] == ["id", "mode"]
+    fetch_properties = fetch_parameters["properties"]
+    assert isinstance(fetch_properties, dict)
+    fetch_properties = cast("dict[str, object]", fetch_properties)
+    assert set(fetch_properties) == {"id", "mode", "start", "count", "pattern"}
+    assert fetch_definition["description"]
+
+    # And: tokenjuice_status exposes an empty object contract plus model-visible description.
+    assert status_definition["description"]
+    assert status_definition["parameters"] == {"type": "object", "properties": {}}
 
 
 def test_tool_host_fetch_redeems_stored_blob(tmp_path: Path) -> None:
