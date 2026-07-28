@@ -26,6 +26,13 @@ _PRUNING_CONFIG_PREFIXES: Final[tuple[str, ...]] = (
     "tokenjuice_prompt_pruning_",
     "tokenjuice_rescue_",
 )
+_RUNTIME_CONTEXT_KEYS: Final[tuple[str, ...]] = (
+    "threshold_tokens",
+    "target_tokens",
+    "trigger_tokens",
+    "now_epoch_ms",
+    "tool_schema_tokens",
+)
 _CONTRIBUTION_KEYS: Final[tuple[str, ...]] = (
     "id",
     "kind",
@@ -88,6 +95,7 @@ def _fingerprint(request: StructuredPruningMemoRequest) -> str | None:
             "identity": _identity(request.config),
             "current_pressure_tokens": request.current_pressure_tokens,
             "threshold_tokens": request.threshold_tokens,
+            "runtime": _runtime_context(request.config),
             "config": _pruning_config(request.config),
             "contributions": _contribution_fingerprints(request.contributions),
         }
@@ -107,6 +115,10 @@ def _pruning_config(config: dict[str, JsonScalar]) -> dict[str, JsonValue]:
         for key, value in sorted(config.items())
         if key not in _EXCLUDED_CONFIG_KEYS and key.startswith(_PRUNING_CONFIG_PREFIXES)
     }
+
+
+def _runtime_context(config: dict[str, JsonScalar]) -> dict[str, JsonValue]:
+    return {key: config.get(key) for key in _RUNTIME_CONTEXT_KEYS if key in config}
 
 
 def _contribution_fingerprints(

@@ -553,6 +553,55 @@ def _assert_no_orphan_tool_results(messages: list[dict[str, JsonValue]]) -> None
         assert tool_call_id in seen_tool_calls
 
 
+def _diagnostic_atomic_pair(
+    index: int,
+    *,
+    token_estimate: int = 3_000,
+) -> tuple[Contribution, Contribution]:
+    group_id = f"call-{index}"
+    diagnostic_content = numbered_lines(f"idempotent diagnostic {index}", 800)
+    assistant = _contribution(
+        contribution_id=f"assistant-call-{index}",
+        kind="message",
+        provenance="conversation_history",
+        class_="assistant_message",
+        stability="turn_ephemeral",
+        token_estimate=100,
+        prune_policy="never",
+        atomic_group_id=group_id,
+        content="",
+        provider_message={
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": group_id,
+                    "type": "function",
+                    "function": {"name": "diagnostics", "arguments": "{}"},
+                }
+            ],
+        },
+    )
+    diagnostic = _contribution(
+        contribution_id=f"diagnostic-result-{index}",
+        kind="tool_interaction",
+        provenance="conversation_history",
+        class_="diagnostic",
+        stability="turn_ephemeral",
+        token_estimate=token_estimate,
+        prune_policy="never",
+        atomic_group_id=group_id,
+        content=diagnostic_content,
+        provider_message={
+            "role": "tool",
+            "tool_call_id": group_id,
+            "name": "diagnostics",
+            "content": diagnostic_content,
+        },
+    )
+    return assistant, diagnostic
+
+
 class TestStructuredPruningPolicy:
     def test_disabled_by_default_returns_none(self) -> None:
         cfg = dict(_STRUCTURED_PRUNING_TEST_CONFIG)
@@ -989,47 +1038,7 @@ class TestStructuredPruningPolicy:
         host = HermesHost(config=cast("dict[str, JsonValue]", cfg), session_id="session-a")
         register(host)
         callback = host.callbacks["structured_context_prune"]
-        diagnostic_content = numbered_lines("atomic diagnostic", 800)
-        group_id = "call-1"
-        assistant = _contribution(
-            contribution_id="assistant-call",
-            kind="message",
-            provenance="conversation_history",
-            class_="assistant_message",
-            stability="turn_ephemeral",
-            token_estimate=100,
-            prune_policy="never",
-            atomic_group_id=group_id,
-            content="",
-            provider_message={
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [
-                    {
-                        "id": group_id,
-                        "type": "function",
-                        "function": {"name": "diagnostics", "arguments": "{}"},
-                    }
-                ],
-            },
-        )
-        diagnostic = _contribution(
-            contribution_id="diagnostic-result",
-            kind="tool_interaction",
-            provenance="conversation_history",
-            class_="diagnostic",
-            stability="turn_ephemeral",
-            token_estimate=3_000,
-            prune_policy="never",
-            atomic_group_id=group_id,
-            content=diagnostic_content,
-            provider_message={
-                "role": "tool",
-                "tool_call_id": group_id,
-                "name": "diagnostics",
-                "content": diagnostic_content,
-            },
-        )
+        assistant, diagnostic = _diagnostic_atomic_pair(1)
 
         result = callback(
             [assistant, diagnostic],
@@ -1056,7 +1065,7 @@ class TestStructuredPruningPolicy:
                 "full",
                 session_id="session-a",
             )
-            == diagnostic_content
+            == diagnostic["content"]
         )
 
     def test_registered_structured_pruning_reuses_preflight_result_before_pre_api(
@@ -1073,47 +1082,7 @@ class TestStructuredPruningPolicy:
         reset_stats()
         register(host)
         callback = host.callbacks["structured_context_prune"]
-        diagnostic_content = numbered_lines("idempotent diagnostic", 800)
-        group_id = "call-1"
-        assistant = _contribution(
-            contribution_id="assistant-call",
-            kind="message",
-            provenance="conversation_history",
-            class_="assistant_message",
-            stability="turn_ephemeral",
-            token_estimate=100,
-            prune_policy="never",
-            atomic_group_id=group_id,
-            content="",
-            provider_message={
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [
-                    {
-                        "id": group_id,
-                        "type": "function",
-                        "function": {"name": "diagnostics", "arguments": "{}"},
-                    }
-                ],
-            },
-        )
-        diagnostic = _contribution(
-            contribution_id="diagnostic-result",
-            kind="tool_interaction",
-            provenance="conversation_history",
-            class_="diagnostic",
-            stability="turn_ephemeral",
-            token_estimate=3_000,
-            prune_policy="never",
-            atomic_group_id=group_id,
-            content=diagnostic_content,
-            provider_message={
-                "role": "tool",
-                "tool_call_id": group_id,
-                "name": "diagnostics",
-                "content": diagnostic_content,
-            },
-        )
+        assistant, diagnostic = _diagnostic_atomic_pair(1)
         contributions = [assistant, diagnostic]
         put_count = 0
         original_put = BlobStore.put
@@ -1177,6 +1146,205 @@ class TestStructuredPruningPolicy:
         assert snapshot["structured_pruning_rescued_count"] == 2
         assert snapshot["structured_pruning_attempted_count"] == 4
         assert snapshot["structured_pruning_saved_tokens"] == saved_tokens * 2
+
+    def test_registered_structured_pruning_misses_on_runtime_policy_changes(
+        self,
+        tmp_path: Path,
+        monkeypatch: MonkeyPatch,
+    ) -> None:
+        cfg = dict(_STRUCTURED_PRUNING_TEST_CONFIG)
+        cfg["tokenjuice_prompt_pruning_threshold_tokens"] = 313_500
+        cfg["tokenjuice_prompt_pruning_protect_recent_messages"] = 0
+        cfg["tokenjuice_prompt_pruning_protect_recent_tool_interactions"] = 0
+        cfg["tokenjuice_rescue_store_path"] = str(tmp_path)
+        host = HermesHost(config=cast("dict[str, JsonValue]", cfg), session_id="session-a")
+        reset_stats()
+        register(host)
+        callback = host.callbacks["structured_context_prune"]
+        pair_a = _diagnostic_atomic_pair(1)
+        pair_b = _diagnostic_atomic_pair(2)
+        contributions = [*pair_a, *pair_b]
+        put_count = 0
+        original_put = BlobStore.put
+
+        def counted_put(self: BlobStore, content: str, tool_name: str, session_id: str) -> str:
+            nonlocal put_count
+            put_count += 1
+            return original_put(self, content, tool_name, session_id)
+
+        monkeypatch.setattr(BlobStore, "put", counted_put)
+
+        first = callback(
+            contributions,
+            phase="preflight",
+            session_id="session-a",
+            turn_id="turn-a",
+            current_pressure_tokens=316_000,
+            threshold_tokens=313_500,
+            target_tokens=317_000,
+            now_epoch_ms=_DETERMINISTIC_EPOCH_MS,
+        )
+        stale_candidate = callback(
+            contributions,
+            phase="pre_api",
+            session_id="session-a",
+            turn_id="turn-a",
+            current_pressure_tokens=316_000,
+            threshold_tokens=313_500,
+            target_tokens=310_000,
+            now_epoch_ms=_DETERMINISTIC_EPOCH_MS,
+        )
+        fresh_control = callback(
+            contributions,
+            phase="pre_api",
+            session_id="session-a",
+            turn_id="turn-b",
+            current_pressure_tokens=316_000,
+            threshold_tokens=313_500,
+            target_tokens=310_000,
+            now_epoch_ms=_DETERMINISTIC_EPOCH_MS,
+        )
+
+        assert isinstance(first, dict)
+        assert isinstance(stale_candidate, dict)
+        assert stale_candidate == fresh_control
+        first_accounting = first["accounting"]
+        stale_accounting = stale_candidate["accounting"]
+        assert isinstance(first_accounting, dict)
+        assert isinstance(stale_accounting, dict)
+        first_saved = first_accounting["saved_tokens"]
+        stale_saved = stale_accounting["saved_tokens"]
+        assert isinstance(first_saved, int)
+        assert isinstance(stale_saved, int)
+        assert first_accounting["pruned_groups"] == 1
+        assert stale_accounting["pruned_groups"] == 2
+        assert first_saved < stale_saved
+        assert put_count == 5
+
+    def test_registered_structured_pruning_memo_key_covers_runtime_inputs(
+        self,
+        tmp_path: Path,
+        monkeypatch: MonkeyPatch,
+    ) -> None:
+        cfg = dict(_STRUCTURED_PRUNING_TEST_CONFIG)
+        cfg["tokenjuice_prompt_pruning_threshold_tokens"] = 10_000
+        cfg["tokenjuice_prompt_pruning_protect_recent_messages"] = 0
+        cfg["tokenjuice_prompt_pruning_protect_recent_tool_interactions"] = 0
+        cfg["tokenjuice_rescue_store_path"] = str(tmp_path)
+        single_pair = _diagnostic_atomic_pair(1)
+        contributions = [*single_pair]
+        put_count = 0
+        original_put = BlobStore.put
+
+        def counted_put(self: BlobStore, content: str, tool_name: str, session_id: str) -> str:
+            nonlocal put_count
+            put_count += 1
+            return original_put(self, content, tool_name, session_id)
+
+        monkeypatch.setattr(BlobStore, "put", counted_put)
+
+        def run_pair(
+            *,
+            second_kwargs: dict[str, JsonValue] | None = None,
+            first_kwargs: dict[str, JsonValue] | None = None,
+            first_contributions: list[Contribution] | None = None,
+            second_contributions: list[Contribution] | None = None,
+        ) -> int:
+            host = HermesHost(config=cast("dict[str, JsonValue]", cfg), session_id="session-a")
+            register(host)
+            callback = host.callbacks["structured_context_prune"]
+            base_kwargs: dict[str, JsonValue] = {
+                "phase": "preflight",
+                "session_id": "session-a",
+                "turn_id": "turn-a",
+                "request_id": "request-a",
+                "current_pressure_tokens": 11_000,
+                "threshold_tokens": 10_000,
+                "target_tokens": 7_500,
+                "trigger_tokens": 8_000,
+                "now_epoch_ms": _DETERMINISTIC_EPOCH_MS,
+                "tool_schema_tokens": 0,
+            }
+            if first_kwargs is not None:
+                base_kwargs.update(first_kwargs)
+            before = put_count
+            first = callback(first_contributions or contributions, **base_kwargs)
+            assert isinstance(first, dict)
+            next_kwargs = {**base_kwargs, "phase": "pre_api"}
+            if second_kwargs is not None:
+                next_kwargs.update(second_kwargs)
+            second = callback(second_contributions or contributions, **next_kwargs)
+            assert isinstance(second, dict)
+            return put_count - before
+
+        assert run_pair() == 1
+
+        changed_hash = deepcopy(contributions)
+        changed_hash[1]["content_hash"] = "f" * 64
+        pair_a = _diagnostic_atomic_pair(1)
+        pair_b = _diagnostic_atomic_pair(2)
+        ordered = [*pair_a, *pair_b]
+        reordered = [*pair_b, *pair_a]
+        cases: tuple[
+            tuple[
+                str,
+                dict[str, JsonValue],
+                dict[str, JsonValue] | None,
+                list[Contribution] | None,
+                list[Contribution] | None,
+                int,
+            ],
+            ...,
+        ] = (
+            ("trigger_tokens", {"trigger_tokens": 8_100}, None, None, None, 2),
+            (
+                "now_epoch_ms",
+                {"now_epoch_ms": _DETERMINISTIC_EPOCH_MS + 1_000},
+                None,
+                None,
+                None,
+                2,
+            ),
+            (
+                "tool_schema_tokens",
+                {"current_pressure_tokens": None, "tool_schema_tokens": 8_100},
+                {"current_pressure_tokens": None, "tool_schema_tokens": 8_000},
+                None,
+                None,
+                2,
+            ),
+            ("pressure", {"current_pressure_tokens": 11_100}, None, None, None, 2),
+            ("threshold", {"threshold_tokens": 9_900}, None, None, None, 2),
+            (
+                "pruning_config",
+                {"tokenjuice_prompt_pruning_min_saved_tokens": 257},
+                None,
+                None,
+                None,
+                2,
+            ),
+            ("contribution_hash", {}, None, None, changed_hash, 2),
+            ("contribution_order", {}, None, ordered, reordered, 4),
+            ("turn_identity", {"turn_id": "turn-b"}, None, None, None, 2),
+            ("request_identity", {"request_id": "request-b"}, None, None, None, 2),
+        )
+        for (
+            _name,
+            second_kwargs,
+            first_kwargs,
+            first_contributions,
+            second_contributions,
+            expected_put_delta,
+        ) in cases:
+            assert (
+                run_pair(
+                    second_kwargs=second_kwargs,
+                    first_kwargs=first_kwargs,
+                    first_contributions=first_contributions,
+                    second_contributions=second_contributions,
+                )
+                == expected_put_delta
+            )
 
     def test_recent_messages_are_protected(self) -> None:
         cfg = dict(_STRUCTURED_PRUNING_TEST_CONFIG)
