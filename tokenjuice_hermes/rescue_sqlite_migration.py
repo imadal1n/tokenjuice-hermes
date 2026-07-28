@@ -41,17 +41,21 @@ def migrate_legacy_indexes(store: MigrationContext) -> None:
         return
     quarantine = store.root / "migration-quarantine"
     quarantine.mkdir(exist_ok=True)
+    completed = True
     for index_file in sorted(store.meta_dir.glob("*.json")):
         try:
             idx = read_idx_file(index_file)
             if not idx and index_file.exists() and index_file.read_text(encoding="utf-8").strip():
                 _ = shutil.copy2(index_file, quarantine / index_file.name)
+                completed = False
                 continue
         except OSError:
+            completed = False
             continue
         for handle, entry in idx.get("blobs", {}).items():
             _migrate_entry(store, index_file.stem, handle, entry)
-    _write_marker(marker)
+    if completed:
+        _write_marker(marker)
 
 
 def _migrate_entry(

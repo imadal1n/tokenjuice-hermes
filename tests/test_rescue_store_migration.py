@@ -6,7 +6,7 @@ import sqlite3
 from typing import TYPE_CHECKING
 
 from tokenjuice_hermes.compaction import transform_tool_result
-from tokenjuice_hermes.rescue_index import idx_path
+from tokenjuice_hermes.rescue_index import SessionIndex, idx_path
 from tokenjuice_hermes.rescue_sqlite_types import MIGRATION_MARKER
 from tokenjuice_hermes.rescue_store import BlobStore
 
@@ -104,7 +104,7 @@ def test_migrates_exact_legacy_safe_sid_json_and_fails_closed(tmp_path: Path) ->
     assert not (tmp_path / "blobs" / "111111111111").exists()
     assert (tmp_path / "sessions" / "corrupt-safe-sid.json").exists()
     assert (tmp_path / "migration-quarantine" / "corrupt-safe-sid.json").exists()
-    assert (tmp_path / MIGRATION_MARKER).exists()
+    assert not (tmp_path / MIGRATION_MARKER).exists()
     assert (
         BlobStore({"store_path": str(tmp_path)}).fetch(live, mode="full", session_id=short_sid)
         == "live data"
@@ -181,6 +181,42 @@ def test_empty_migration_marker_does_not_skip_legacy_migration(tmp_path: Path) -
     migrated = BlobStore({"store_path": str(tmp_path)})
 
     assert migrated.fetch(handle, mode="full", session_id=session_id) == "live after crash"
+
+
+def test_unreadable_legacy_index_prevents_success_marker_and_retries(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    session_id = "session-a"
+    blob_dir = tmp_path / "blobs"
+    session_dir = tmp_path / "sessions"
+    blob_dir.mkdir()
+    session_dir.mkdir()
+    handle, full_hash, size = _legacy_blob(blob_dir, "retry after unreadable")
+    index_file = idx_path(session_dir, session_id)
+    _ = index_file.write_text(
+        json.dumps(
+            {"blobs": {handle: {"t": 1.0, "tool": "web_search", "size": size, "hash": full_hash}}}
+        ),
+        encoding="utf-8",
+    )
+
+    def unreadable_once(path: Path) -> SessionIndex:
+        if path.name == index_file.name:
+            message = "simulated unreadable index"
+            raise OSError(message)
+        return {}
+
+    with monkeypatch.context() as patch:
+        patch.setattr("tokenjuice_hermes.rescue_sqlite_migration.read_idx_file", unreadable_once)
+        first_start = BlobStore({"store_path": str(tmp_path)})
+        first_fetch = first_start.fetch(handle, mode="full", session_id=session_id)
+        marker_after_unreadable = (tmp_path / MIGRATION_MARKER).exists()
+    restarted = BlobStore({"store_path": str(tmp_path)})
+
+    assert "not available in this session" in first_fetch
+    assert marker_after_unreadable is False
+    assert restarted.fetch(handle, mode="full", session_id=session_id) == "retry after unreadable"
 
 
 def test_rescue_transform_fails_open_when_store_put_fails(
