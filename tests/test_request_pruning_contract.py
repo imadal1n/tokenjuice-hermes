@@ -6,9 +6,10 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeAlias, cast
 
-from tests.host_fixtures import HermesHost, HookOnlyHost, MiddlewareHost
+from tests.host_fixtures import HermesHost, HookOnlyHost, MiddlewareHost, extract_hex_handle
 from tokenjuice_hermes.json_types import JsonValue, parse_json
 from tokenjuice_hermes.plugin import register
+from tokenjuice_hermes.rescue_store import BlobStore
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -559,6 +560,91 @@ class TestStructuredPruningPolicy:
         )
         assert result is not None
         assert result["accounting"]["saved_tokens"] >= hard_pressure - hard_target
+
+    def test_hard_pressure_rescues_diagnostics_to_cross_threshold(self, tmp_path: Path) -> None:
+        cfg = dict(_STRUCTURED_PRUNING_TEST_CONFIG)
+        cfg["tokenjuice_prompt_pruning_protect_recent_messages"] = 0
+        cfg["tokenjuice_prompt_pruning_protect_recent_tool_interactions"] = 0
+        cfg["tokenjuice_rescue_store_path"] = str(tmp_path)
+        cfg["tokenjuice_rescue_fetch_available"] = True
+        threshold = cfg["tokenjuice_prompt_pruning_threshold_tokens"]
+        assert isinstance(threshold, int)
+
+        terminal = _contribution(
+            contribution_id="terminal-small",
+            kind="tool_interaction",
+            provenance="conversation_history",
+            class_="terminal_tool_output",
+            stability="turn_ephemeral",
+            token_estimate=1_000,
+            prune_policy="hard_clear_allowed",
+            content="terminal output",
+        )
+        diagnostic_content = numbered_lines("diagnostic traceback", 400)
+        diagnostic = _contribution(
+            contribution_id="diagnostic-large",
+            kind="tool_interaction",
+            provenance="conversation_history",
+            class_="diagnostic",
+            stability="turn_ephemeral",
+            token_estimate=4_000,
+            prune_policy="hard_clear_allowed",
+            content=diagnostic_content,
+            provider_message={
+                "role": "tool",
+                "tool_call_id": "diagnostic-call",
+                "name": "diagnostics",
+                "content": diagnostic_content,
+            },
+        )
+        read_file = _contribution(
+            contribution_id="read-file",
+            kind="tool_interaction",
+            provenance="conversation_history",
+            class_="exact_file_read",
+            stability="stable_prefix",
+            token_estimate=4_000,
+            prune_policy="never",
+            content="exact file bytes",
+            provider_message={
+                "role": "tool",
+                "tool_call_id": "read-call",
+                "name": "read_file",
+                "content": "exact file bytes",
+            },
+        )
+
+        result = _prune_structured_context(
+            [terminal, diagnostic, read_file],
+            current_pressure_tokens=threshold + 2_500,
+            threshold_tokens=threshold,
+            session_id="session-a",
+            **cfg,
+        )
+
+        assert result is not None
+        messages = result["effective_messages"]
+        diagnostic_messages = [
+            message for message in messages if message.get("name") == "diagnostics"
+        ]
+        assert len(diagnostic_messages) == 1
+        rescued_content = diagnostic_messages[0].get("content")
+        assert isinstance(rescued_content, str)
+        assert diagnostic_content not in rescued_content
+        handle = extract_hex_handle(rescued_content)
+        assert handle is not None
+        assert (
+            BlobStore({"store_path": str(tmp_path)}).fetch(
+                handle,
+                "full",
+                session_id="session-a",
+            )
+            == diagnostic_content
+        )
+        read_messages = [message for message in messages if message.get("name") == "read_file"]
+        assert len(read_messages) == 1
+        assert read_messages[0].get("content") == "exact file bytes"
+        assert result["accounting"]["saved_tokens"] >= 2_500
 
     def test_recent_messages_are_protected(self) -> None:
         cfg = dict(_STRUCTURED_PRUNING_TEST_CONFIG)

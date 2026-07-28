@@ -20,6 +20,7 @@ from .structured_pruning_groups import (
     resolve_now_ms,
     select_pruned_groups,
 )
+from .structured_pruning_rescue import apply_pruned_groups
 from .structured_pruning_types import (
     STRUCTURED_PRUNING_MARKER,
     PressureRoute,
@@ -76,10 +77,13 @@ def _prune_structured_context(
     if pruned_groups is None:
         return None
 
-    pruned_ids = {c.id for group in pruned_groups for c in group.contributions}
-    retained = [c for c in parsed_contributions if c.id not in pruned_ids]
-    saved_tokens = sum(group.savings for group in pruned_groups)
-    pruned_count = sum(len(group.contributions) for group in pruned_groups)
+    retained, saved_tokens, pruned_count = apply_pruned_groups(
+        parsed_contributions,
+        pruned_groups,
+        context,
+    )
+    if retained is None:
+        return None
 
     if config.accounting_enabled:
         with contextlib.suppress(Exception):

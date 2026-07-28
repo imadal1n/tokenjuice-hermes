@@ -8,6 +8,7 @@ from .structured_pruning_types import (
     HARD_CLEAR_POLICY,
     PREFIX_CACHE_SCOPES,
     PROTECTED_CLASSES,
+    RESCUE_BACKED_CLASSES,
     SOFT_TRIM_POLICY,
     STABLE_STABILITIES,
     ContributionInternal,
@@ -233,9 +234,8 @@ def _build_group(
     ttl_protected = any(_is_ttl_protected(c, config, now_ms) for c in contributions)
     oldest_created_at_ms = _oldest_created_at(contributions)
 
-    disposable_members = [
-        c for c in contributions if c.class_ in config.classes and c.class_ not in PROTECTED_CLASSES
-    ]
+    eligible_classes = config.classes | RESCUE_BACKED_CLASSES
+    disposable_members = [c for c in contributions if c.class_ in eligible_classes]
     has_disposable = bool(disposable_members) and any(
         c.prune_policy in {SOFT_TRIM_POLICY, HARD_CLEAR_POLICY} for c in disposable_members
     )

@@ -15,7 +15,7 @@ DEFAULT_MIN_SAVED_TOKENS: Final[int] = 256
 DEFAULT_CACHE_TTL_SECONDS: Final[int] = 3600
 DEFAULT_PROTECT_RECENT_MESSAGES: Final[int] = 8
 DEFAULT_PROTECT_RECENT_TOOL_INTERACTIONS: Final[int] = 2
-DEFAULT_CLASSES: Final[str] = "terminal_tool_output"
+DEFAULT_CLASSES: Final[str] = "terminal_tool_output,diagnostic"
 DEFAULT_ACCOUNTING_ENABLED: Final[bool] = True
 
 STRUCTURED_PRUNING_MARKER: Final[str] = "[tokenjuice-hermes: structured context pruning"
@@ -34,10 +34,10 @@ PROTECTED_CLASSES: Final[frozenset[str]] = frozenset(
         "user_message",
         "tool_schema",
         "exact_file_read",
-        "diagnostic",
         "unknown",
     }
 )
+RESCUE_BACKED_CLASSES: Final[frozenset[str]] = frozenset({"diagnostic"})
 STABLE_STABILITIES: Final[frozenset[str]] = frozenset({"stable_prefix", "session_stable"})
 PREFIX_CACHE_SCOPES: Final[frozenset[str]] = frozenset({"prefix", "body"})
 
