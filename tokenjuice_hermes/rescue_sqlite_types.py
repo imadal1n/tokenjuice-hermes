@@ -12,6 +12,7 @@ HandleRow: TypeAlias = tuple[str]
 
 DB_NAME = "ownership.sqlite3"
 MIGRATION_MARKER = "ownership.sqlite3.migrated"
+MIGRATION_MARKER_CONTENT = "schema=1\n"
 BUSY_TIMEOUT_MS = 5_000
 
 
@@ -60,13 +61,13 @@ CREATE TABLE IF NOT EXISTS ownership (
   handle TEXT NOT NULL,
   state TEXT NOT NULL CHECK(state IN ('live', 'tombstone')),
   tool TEXT NOT NULL,
+  size INTEGER NOT NULL DEFAULT 0,
   created_at REAL NOT NULL,
   accessed_at REAL,
   swept_at REAL,
   reason TEXT,
   PRIMARY KEY (session_key, handle),
-  FOREIGN KEY (session_key) REFERENCES sessions(session_key) ON DELETE CASCADE,
-  FOREIGN KEY (handle) REFERENCES blobs(handle) ON DELETE RESTRICT
+  FOREIGN KEY (session_key) REFERENCES sessions(session_key) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS ownership_state_idx ON ownership(state, swept_at);
 """

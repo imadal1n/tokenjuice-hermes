@@ -111,6 +111,78 @@ def test_migrates_exact_legacy_safe_sid_json_and_fails_closed(tmp_path: Path) ->
     )
 
 
+def test_migration_preserves_live_blob_when_tombstone_index_is_seen_first(
+    tmp_path: Path,
+) -> None:
+    first_sid = "session-a"
+    second_sid = "session-b"
+    blob_dir = tmp_path / "blobs"
+    session_dir = tmp_path / "sessions"
+    blob_dir.mkdir()
+    session_dir.mkdir()
+    handle, full_hash, size = _legacy_blob(blob_dir, "shared live")
+    _ = idx_path(session_dir, first_sid).write_text(
+        json.dumps({"blobs": {handle: {"swept_at": 1.0, "tool": "web_search", "size": size}}}),
+        encoding="utf-8",
+    )
+    _ = idx_path(session_dir, second_sid).write_text(
+        json.dumps(
+            {"blobs": {handle: {"t": 2.0, "tool": "web_search", "size": size, "hash": full_hash}}}
+        ),
+        encoding="utf-8",
+    )
+
+    migrated = BlobStore({"store_path": str(tmp_path)})
+
+    assert "[Swept]" in migrated.fetch(handle, mode="full", session_id=first_sid)
+    assert migrated.fetch(handle, mode="full", session_id=second_sid) == "shared live"
+
+
+def test_migration_preserves_tombstone_when_live_index_is_seen_first(tmp_path: Path) -> None:
+    first_sid = "session-a"
+    second_sid = "session-b"
+    blob_dir = tmp_path / "blobs"
+    session_dir = tmp_path / "sessions"
+    blob_dir.mkdir()
+    session_dir.mkdir()
+    handle, full_hash, size = _legacy_blob(blob_dir, "shared live")
+    _ = idx_path(session_dir, first_sid).write_text(
+        json.dumps(
+            {"blobs": {handle: {"t": 1.0, "tool": "web_search", "size": size, "hash": full_hash}}}
+        ),
+        encoding="utf-8",
+    )
+    _ = idx_path(session_dir, second_sid).write_text(
+        json.dumps({"blobs": {handle: {"swept_at": 2.0, "tool": "web_search", "size": size}}}),
+        encoding="utf-8",
+    )
+
+    migrated = BlobStore({"store_path": str(tmp_path)})
+
+    assert migrated.fetch(handle, mode="full", session_id=first_sid) == "shared live"
+    assert "[Swept]" in migrated.fetch(handle, mode="full", session_id=second_sid)
+
+
+def test_empty_migration_marker_does_not_skip_legacy_migration(tmp_path: Path) -> None:
+    session_id = "session-a"
+    blob_dir = tmp_path / "blobs"
+    session_dir = tmp_path / "sessions"
+    blob_dir.mkdir()
+    session_dir.mkdir()
+    handle, full_hash, size = _legacy_blob(blob_dir, "live after crash")
+    _ = idx_path(session_dir, session_id).write_text(
+        json.dumps(
+            {"blobs": {handle: {"t": 1.0, "tool": "web_search", "size": size, "hash": full_hash}}}
+        ),
+        encoding="utf-8",
+    )
+    _ = (tmp_path / MIGRATION_MARKER).write_text("", encoding="utf-8")
+
+    migrated = BlobStore({"store_path": str(tmp_path)})
+
+    assert migrated.fetch(handle, mode="full", session_id=session_id) == "live after crash"
+
+
 def test_rescue_transform_fails_open_when_store_put_fails(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,

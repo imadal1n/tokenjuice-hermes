@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import os
 import shutil
 import sqlite3
+import tempfile
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, TypeAlias
+from pathlib import Path
+from typing import TypeAlias
 
 from .rescue_index import (
     HASH_KEY,
@@ -15,11 +18,7 @@ from .rescue_index import (
     BlobEntry,
     read_idx_file,
 )
-from .rescue_sqlite_types import MIGRATION_MARKER, BlobWrite
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
+from .rescue_sqlite_types import MIGRATION_MARKER, MIGRATION_MARKER_CONTENT, BlobWrite
 
 WriteOperation: TypeAlias = Callable[[sqlite3.Connection], None]
 PutBlob: TypeAlias = Callable[[BlobWrite], bool]
@@ -38,7 +37,7 @@ class MigrationContext:
 
 def migrate_legacy_indexes(store: MigrationContext) -> None:
     marker = store.root / MIGRATION_MARKER
-    if marker.exists():
+    if marker.exists() and marker.read_text(encoding="utf-8") == MIGRATION_MARKER_CONTENT:
         return
     quarantine = store.root / "migration-quarantine"
     quarantine.mkdir(exist_ok=True)
@@ -52,7 +51,7 @@ def migrate_legacy_indexes(store: MigrationContext) -> None:
             continue
         for handle, entry in idx.get("blobs", {}).items():
             _migrate_entry(store, index_file.stem, handle, entry)
-    _ = marker.write_text("ok\n", encoding="utf-8")
+    _write_marker(marker)
 
 
 def _migrate_entry(
@@ -83,24 +82,37 @@ def _insert_tombstone(
 
     def operation(conn: sqlite3.Connection) -> None:
         _ = conn.execute(
-            """
-            INSERT OR IGNORE INTO blobs(handle, full_hash, size, created_at)
-            VALUES (?, ?, ?, ?)
-            """,
-            (handle, handle + "0" * 52, int(entry.get(SIZE_KEY, 0)), now),
-        )
-        _ = conn.execute(
             "INSERT OR IGNORE INTO sessions(session_key, created_at) VALUES (?, ?)",
             (session_key, now),
         )
         _ = conn.execute(
             """
             INSERT OR REPLACE INTO ownership(
-              session_key, handle, state, tool, created_at, swept_at, reason
+              session_key, handle, state, tool, size, created_at, swept_at, reason
             )
-            VALUES (?, ?, 'tombstone', ?, ?, ?, 'legacy_tombstone')
+            VALUES (?, ?, 'tombstone', ?, ?, ?, ?, 'legacy_tombstone')
             """,
-            (session_key, handle, str(entry.get(TOOL_KEY, "")), now, now),
+            (
+                session_key,
+                handle,
+                str(entry.get(TOOL_KEY, "")),
+                int(entry.get(SIZE_KEY, 0)),
+                now,
+                now,
+            ),
         )
 
     store.write_tx(operation)
+
+
+def _write_marker(marker: Path) -> None:
+    fd, tmp_name = tempfile.mkstemp(dir=marker.parent, prefix=".tmp", suffix=".migrated")
+    os.close(fd)
+    tmp = Path(tmp_name)
+    try:
+        with tmp.open("w", encoding="utf-8") as file:
+            _ = file.write(MIGRATION_MARKER_CONTENT)
+        _ = tmp.replace(marker)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
