@@ -41,6 +41,11 @@ def apply_pruned_groups(
     replacements = _rescue_replacements(pruned_by_id, context)
     if replacements is None:
         return None
+    rescued_atomic_group_ids = {
+        contribution.atomic_group_id
+        for contribution in replacements.values()
+        if contribution.atomic_group_id is not None
+    }
 
     retained: list[ContributionInternal] = []
     saved_tokens = 0
@@ -54,6 +59,9 @@ def apply_pruned_groups(
 
         replacement = replacements.get(contribution.id)
         if replacement is None:
+            if contribution.atomic_group_id in rescued_atomic_group_ids:
+                retained.append(contribution)
+                continue
             saved_tokens += contribution.token_estimate
             pruned_count += 1
             continue

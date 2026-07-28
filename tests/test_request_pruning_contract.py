@@ -368,7 +368,14 @@ def _spread_tokens(total: int, count: int) -> list[int]:
 
 def _production_snapshot_contributions() -> list[Contribution]:
     contributions: list[Contribution] = []
-    for index, tokens in enumerate(_spread_tokens(3_617, 115)):
+    assistant_tokens = _spread_tokens(3_617, 115)
+    diagnostic_tokens = _spread_tokens(83_900, 79)
+    for index, tokens in enumerate(assistant_tokens[:79]):
+        group_id = f"diagnostic-call-{index}"
+        diagnostic_content = numbered_lines(
+            f"diagnostic {index}",
+            max(80, diagnostic_tokens[index] // 5),
+        )
         contributions.append(
             _contribution(
                 contribution_id=f"assistant-{index}",
@@ -378,7 +385,70 @@ def _production_snapshot_contributions() -> list[Contribution]:
                 stability="turn_ephemeral",
                 token_estimate=tokens,
                 prune_policy="never",
-                content=f"assistant {index}",
+                atomic_group_id=group_id,
+                content="",
+                provider_message={
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": group_id,
+                            "type": "function",
+                            "function": {"name": "diagnostics", "arguments": "{}"},
+                        }
+                    ],
+                },
+            )
+        )
+        contributions.append(
+            _contribution(
+                contribution_id=f"diagnostic-{index}",
+                kind="tool_interaction",
+                provenance="conversation_history",
+                class_="diagnostic",
+                stability="turn_ephemeral",
+                token_estimate=diagnostic_tokens[index],
+                prune_policy="never",
+                atomic_group_id=group_id,
+                content=diagnostic_content,
+                provider_message={
+                    "role": "tool",
+                    "tool_call_id": group_id,
+                    "name": "diagnostics",
+                    "content": diagnostic_content,
+                },
+            )
+        )
+    for index, tokens in enumerate(assistant_tokens[79:], start=79):
+        read_index = index - 79
+        group_id = f"read-call-{read_index}"
+        provider_message: dict[str, JsonValue] | None = None
+        atomic_group_id: str | None = None
+        if read_index < 33:
+            atomic_group_id = group_id
+            provider_message = {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": group_id,
+                        "type": "function",
+                        "function": {"name": "read_file", "arguments": "{}"},
+                    }
+                ],
+            }
+        contributions.append(
+            _contribution(
+                contribution_id=f"assistant-{index}",
+                kind="message",
+                provenance="conversation_history",
+                class_="assistant_message",
+                stability="turn_ephemeral",
+                token_estimate=tokens,
+                prune_policy="never",
+                atomic_group_id=atomic_group_id,
+                content="" if provider_message is not None else f"assistant {index}",
+                provider_message=provider_message,
             )
         )
     for index, tokens in enumerate(_spread_tokens(14_537, 19)):
@@ -394,27 +464,7 @@ def _production_snapshot_contributions() -> list[Contribution]:
                 content=f"user {index}",
             )
         )
-    for index, tokens in enumerate(_spread_tokens(83_793, 79)):
-        diagnostic_content = numbered_lines(f"diagnostic {index}", max(80, tokens // 5))
-        contributions.append(
-            _contribution(
-                contribution_id=f"diagnostic-{index}",
-                kind="tool_interaction",
-                provenance="conversation_history",
-                class_="diagnostic",
-                stability="turn_ephemeral",
-                token_estimate=tokens,
-                prune_policy="never",
-                content=diagnostic_content,
-                provider_message={
-                    "role": "tool",
-                    "tool_call_id": f"diagnostic-call-{index}",
-                    "name": "diagnostics",
-                    "content": diagnostic_content,
-                },
-            )
-        )
-    for index, tokens in enumerate(_spread_tokens(71_340, 33)):
+    for index, tokens in enumerate(_spread_tokens(71_529, 33)):
         contributions.append(
             _contribution(
                 contribution_id=f"read-file-{index}",
@@ -424,6 +474,7 @@ def _production_snapshot_contributions() -> list[Contribution]:
                 stability="stable_prefix",
                 token_estimate=tokens,
                 prune_policy="never",
+                atomic_group_id=f"read-call-{index}",
                 content=f"exact file bytes {index}",
                 provider_message={
                     "role": "tool",
@@ -433,7 +484,32 @@ def _production_snapshot_contributions() -> list[Contribution]:
                 },
             )
         )
-    for index, tokens in enumerate(_spread_tokens(2_956, 25)):
+    for index, tokens in enumerate(_spread_tokens(2_965, 25)):
+        group_id = f"terminal-call-{index}"
+        contributions.append(
+            _contribution(
+                contribution_id=f"terminal-assistant-{index}",
+                kind="message",
+                provenance="conversation_history",
+                class_="assistant_message",
+                stability="turn_ephemeral",
+                token_estimate=0,
+                prune_policy="never",
+                atomic_group_id=group_id,
+                content="",
+                provider_message={
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": group_id,
+                            "type": "function",
+                            "function": {"name": "terminal", "arguments": "{}"},
+                        }
+                    ],
+                },
+            )
+        )
         contributions.append(
             _contribution(
                 contribution_id=f"terminal-{index}",
@@ -443,10 +519,35 @@ def _production_snapshot_contributions() -> list[Contribution]:
                 stability="turn_ephemeral",
                 token_estimate=tokens,
                 prune_policy="hard_clear_allowed",
+                atomic_group_id=group_id,
                 content=f"terminal {index}",
+                provider_message={
+                    "role": "tool",
+                    "tool_call_id": group_id,
+                    "name": "terminal",
+                    "content": f"terminal {index}",
+                },
             )
         )
     return contributions
+
+
+def _assert_no_orphan_tool_results(messages: list[dict[str, JsonValue]]) -> None:
+    seen_tool_calls: set[str] = set()
+    for message in messages:
+        if message.get("role") == "assistant":
+            tool_calls = message.get("tool_calls")
+            if isinstance(tool_calls, list):
+                for tool_call in tool_calls:
+                    if isinstance(tool_call, dict):
+                        tool_call_id = tool_call.get("id")
+                        if isinstance(tool_call_id, str):
+                            seen_tool_calls.add(tool_call_id)
+        if message.get("role") != "tool":
+            continue
+        tool_call_id = message.get("tool_call_id")
+        assert isinstance(tool_call_id, str)
+        assert tool_call_id in seen_tool_calls
 
 
 class TestStructuredPruningPolicy:
@@ -752,8 +853,6 @@ class TestStructuredPruningPolicy:
         cfg = dict(_STRUCTURED_PRUNING_TEST_CONFIG)
         cfg["tokenjuice_prompt_pruning_threshold_tokens"] = _PRODUCTION_THRESHOLD_TOKENS
         cfg["tokenjuice_prompt_pruning_hard_target_ratio"] = 75
-        cfg["tokenjuice_prompt_pruning_protect_recent_messages"] = 0
-        cfg["tokenjuice_prompt_pruning_protect_recent_tool_interactions"] = 0
         cfg["tokenjuice_rescue_store_path"] = str(tmp_path)
         host = HermesHost(config=cast("dict[str, JsonValue]", cfg), session_id="session-a")
         register(host)
@@ -781,6 +880,7 @@ class TestStructuredPruningPolicy:
         assert accounting["attempted_count"] > 0
 
         messages = pruned["effective_messages"]
+        _assert_no_orphan_tool_results(messages)
         diagnostic_messages = [
             message for message in messages if message.get("name") == "diagnostics"
         ]
@@ -821,6 +921,7 @@ class TestStructuredPruningPolicy:
             assert isinstance(second_result, dict)
             second = cast("StructuredPruningResult", cast("object", second_result))
             second_messages = second["effective_messages"]
+            _assert_no_orphan_tool_results(second_messages)
             assert [
                 message.get("content")
                 for message in second_messages
@@ -830,8 +931,6 @@ class TestStructuredPruningPolicy:
     def test_production_snapshot_fails_open_without_fetch_tool(self, tmp_path: Path) -> None:
         cfg = dict(_STRUCTURED_PRUNING_TEST_CONFIG)
         cfg["tokenjuice_prompt_pruning_threshold_tokens"] = _PRODUCTION_THRESHOLD_TOKENS
-        cfg["tokenjuice_prompt_pruning_protect_recent_messages"] = 0
-        cfg["tokenjuice_prompt_pruning_protect_recent_tool_interactions"] = 0
         cfg["tokenjuice_rescue_store_path"] = str(tmp_path)
         host = HermesToollessHost(config=cast("dict[str, JsonValue]", cfg), session_id="session-a")
         register(host)
@@ -856,8 +955,6 @@ class TestStructuredPruningPolicy:
         _ = store_file.write_text("occupied", encoding="utf-8")
         cfg = dict(_STRUCTURED_PRUNING_TEST_CONFIG)
         cfg["tokenjuice_prompt_pruning_threshold_tokens"] = _PRODUCTION_THRESHOLD_TOKENS
-        cfg["tokenjuice_prompt_pruning_protect_recent_messages"] = 0
-        cfg["tokenjuice_prompt_pruning_protect_recent_tool_interactions"] = 0
         cfg["tokenjuice_rescue_store_path"] = str(store_file)
         host = HermesHost(config=cast("dict[str, JsonValue]", cfg), session_id="session-a")
         register(host)
@@ -876,6 +973,88 @@ class TestStructuredPruningPolicy:
 
         assert result is None
         assert contributions == _production_snapshot_contributions()
+
+    def test_rescued_atomic_diagnostic_preserves_assistant_tool_call(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        cfg = dict(_STRUCTURED_PRUNING_TEST_CONFIG)
+        cfg["tokenjuice_prompt_pruning_threshold_tokens"] = 10_000
+        cfg["tokenjuice_prompt_pruning_protect_recent_messages"] = 0
+        cfg["tokenjuice_prompt_pruning_protect_recent_tool_interactions"] = 0
+        cfg["tokenjuice_rescue_store_path"] = str(tmp_path)
+        host = HermesHost(config=cast("dict[str, JsonValue]", cfg), session_id="session-a")
+        register(host)
+        callback = host.callbacks["structured_context_prune"]
+        diagnostic_content = numbered_lines("atomic diagnostic", 800)
+        group_id = "call-1"
+        assistant = _contribution(
+            contribution_id="assistant-call",
+            kind="message",
+            provenance="conversation_history",
+            class_="assistant_message",
+            stability="turn_ephemeral",
+            token_estimate=100,
+            prune_policy="never",
+            atomic_group_id=group_id,
+            content="",
+            provider_message={
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": group_id,
+                        "type": "function",
+                        "function": {"name": "diagnostics", "arguments": "{}"},
+                    }
+                ],
+            },
+        )
+        diagnostic = _contribution(
+            contribution_id="diagnostic-result",
+            kind="tool_interaction",
+            provenance="conversation_history",
+            class_="diagnostic",
+            stability="turn_ephemeral",
+            token_estimate=3_000,
+            prune_policy="never",
+            atomic_group_id=group_id,
+            content=diagnostic_content,
+            provider_message={
+                "role": "tool",
+                "tool_call_id": group_id,
+                "name": "diagnostics",
+                "content": diagnostic_content,
+            },
+        )
+
+        result = callback(
+            [assistant, diagnostic],
+            phase="pre_api",
+            session_id="session-a",
+            current_pressure_tokens=11_000,
+            threshold_tokens=10_000,
+            target_tokens=7_500,
+            now_epoch_ms=_DETERMINISTIC_EPOCH_MS,
+        )
+
+        assert isinstance(result, dict)
+        pruned = cast("StructuredPruningResult", cast("object", result))
+        messages = pruned["effective_messages"]
+        assert [message.get("role") for message in messages] == ["assistant", "tool"]
+        _assert_no_orphan_tool_results(messages)
+        rescued_content = messages[1].get("content")
+        assert isinstance(rescued_content, str)
+        handle = extract_hex_handle(rescued_content)
+        assert handle is not None
+        assert (
+            BlobStore({"store_path": str(tmp_path)}).fetch(
+                handle,
+                "full",
+                session_id="session-a",
+            )
+            == diagnostic_content
+        )
 
     def test_recent_messages_are_protected(self) -> None:
         cfg = dict(_STRUCTURED_PRUNING_TEST_CONFIG)

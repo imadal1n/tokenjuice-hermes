@@ -14,33 +14,36 @@ def select_pruned_groups(
     fallback_savings: int = 0,
 ) -> list[Group] | None:
     """Choose groups to prune while maximizing LCP and honoring policy routes."""
-    core = _candidate_groups(groups, route, config, include_ttl_protected=False)
     if required_savings <= 0:
         return []
+
+    core = candidate_groups(groups, route, config, include_ttl_protected=False)
     full = _optimal_subset(core, required_savings)
     if full is not None:
         return full
 
+    selected: list[Group] | None = None
     if route == PressureRoute.HARD:
-        extended = _candidate_groups(groups, route, config, include_ttl_protected=True)
+        extended = candidate_groups(groups, route, config, include_ttl_protected=True)
         full_extended = _optimal_subset(extended, required_savings)
         if full_extended is not None:
-            return full_extended
-
-        if fallback_savings > 0:
+            selected = full_extended
+        elif fallback_savings > 0:
             fallback_extended = _optimal_subset(extended, fallback_savings)
             if fallback_extended is not None:
-                return fallback_extended
+                selected = fallback_extended
 
-    if fallback_savings > 0:
+    if selected is None and fallback_savings > 0:
         fallback = _optimal_subset(core, fallback_savings)
         if fallback is not None:
-            return fallback
+            selected = fallback
 
-    return _partial_subset(core)
+    if selected is None and fallback_savings <= 0:
+        selected = _partial_subset(core)
+    return selected
 
 
-def _candidate_groups(
+def candidate_groups(
     groups: list[Group],
     route: PressureRoute,
     config: PruningConfig,
@@ -87,7 +90,6 @@ def _optimal_subset(candidates: list[Group], required_savings: int) -> list[Grou
 
 
 def _partial_subset(candidates: list[Group]) -> list[Group] | None:
-    """Return a safe single-group prune when the target cannot be met."""
     if not candidates:
         return None
     latest = max(candidates, key=lambda group: group.index)

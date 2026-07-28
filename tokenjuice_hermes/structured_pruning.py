@@ -1,17 +1,10 @@
-"""TokenJuice structured context-pruning policy for Hermes.
-
-The policy runs over Hermes' structured contributions before request assembly and
-pressure checks. It is disabled by default and fail-open: malformed config or
-unexpected input returns ``None`` so that Hermes falls back to its normal
-compaction path.
-"""
-
 from __future__ import annotations
 
 import contextlib
 from typing import TYPE_CHECKING
 
 from .observability import StructuredPruningStats, record_structured_pruning
+from .structured_pruning_apply import PruningApplicationPlan, apply_threshold_pruning
 from .structured_pruning_config import parse_config
 from .structured_pruning_groups import (
     build_groups,
@@ -22,7 +15,6 @@ from .structured_pruning_provider import (
     provider_messages_from_contributions,
     provider_tools_from_contributions,
 )
-from .structured_pruning_rescue import apply_pruned_groups
 from .structured_pruning_selection import select_pruned_groups
 from .structured_pruning_types import (
     STRUCTURED_PRUNING_MARKER,
@@ -74,16 +66,16 @@ def _prune_structured_context(
 
     required_savings = max(0, pressure - target_tokens)
     threshold_savings = max(0, pressure - threshold)
-    fallback_savings = _fallback_savings(required_savings, threshold_savings)
+    minimum_savings = required_savings if required_savings > 0 else threshold_savings
 
     now_ms = resolve_now_ms(parsed_contributions, context)
     groups = build_groups(parsed_contributions, config, now_ms)
     pruned_groups = select_pruned_groups(
         groups,
         route,
-        required_savings,
+        minimum_savings,
         config,
-        fallback_savings=fallback_savings,
+        fallback_savings=threshold_savings,
     )
     if pruned_groups is None:
         _record_structured_pruning(
@@ -93,23 +85,39 @@ def _prune_structured_context(
         )
         return None
 
-    attempted_count = sum(len(group.contributions) for group in pruned_groups)
-    applied = apply_pruned_groups(
-        parsed_contributions,
-        pruned_groups,
-        context,
+    application = apply_threshold_pruning(
+        PruningApplicationPlan(
+            parsed_contributions=parsed_contributions,
+            groups=groups,
+            pruned_groups=pruned_groups,
+            route=route,
+            config=config,
+            threshold_savings=threshold_savings,
+            context=context,
+        )
     )
-    if applied is None:
+    if application is None:
         _record_structured_pruning(
             enabled=config.accounting_enabled,
             context=context,
             stats=StructuredPruningStats(
-                attempted_count=attempted_count,
+                attempted_count=sum(len(group.contributions) for group in pruned_groups),
                 insufficient_eligible_savings=threshold_savings,
             ),
         )
         return None
 
+    if application.failure_stats is not None:
+        _record_structured_pruning(
+            enabled=config.accounting_enabled,
+            context=context,
+            stats=application.failure_stats,
+        )
+        return None
+
+    pruned_groups = application.pruned_groups
+    attempted_count = application.attempted_count
+    applied = application.applied
     if threshold_savings > 0 and applied.saved_tokens < threshold_savings:
         _record_structured_pruning(
             enabled=config.accounting_enabled,
@@ -171,12 +179,6 @@ def _record_structured_pruning(
             )
 
 
-def _fallback_savings(required_savings: int, threshold_savings: int) -> int:
-    if threshold_savings <= 0:
-        return 0
-    return min(required_savings, threshold_savings * 4)
-
-
 def _prepare_prune(
     contributions: Sequence[Contribution],
     current_pressure_tokens: int | None,
@@ -231,7 +233,6 @@ def _resolve_pressure(
     current_pressure_tokens: int | None,
     context: dict[str, JsonValue],
 ) -> int | None:
-    """Derive current request pressure from explicit data or contribution estimates."""
     if current_pressure_tokens is not None:
         return current_pressure_tokens if current_pressure_tokens >= 0 else None
     tool_schema_tokens = _int_context(context, "tool_schema_tokens") or 0

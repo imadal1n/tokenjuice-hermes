@@ -200,6 +200,7 @@ def test_installed_directory_plugin_layout_imports(tmp_path: Path) -> None:
         "plugin.yaml",
         "request_pruning.py",
         "structured_pruning.py",
+        "structured_pruning_apply.py",
         "structured_pruning_config.py",
         "structured_pruning_groups.py",
         "structured_pruning_provider.py",
