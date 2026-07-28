@@ -11,16 +11,19 @@ from __future__ import annotations
 import contextlib
 from typing import TYPE_CHECKING
 
-from .json_types import parse_json
-from .observability import record_structured_pruning
+from .observability import StructuredPruningStats, record_structured_pruning
 from .structured_pruning_config import parse_config
 from .structured_pruning_groups import (
     build_groups,
     parse_contributions,
     resolve_now_ms,
-    select_pruned_groups,
+)
+from .structured_pruning_provider import (
+    provider_messages_from_contributions,
+    provider_tools_from_contributions,
 )
 from .structured_pruning_rescue import apply_pruned_groups
+from .structured_pruning_selection import select_pruned_groups
 from .structured_pruning_types import (
     STRUCTURED_PRUNING_MARKER,
     PressureRoute,
@@ -67,47 +70,111 @@ def _prune_structured_context(
     prepared = _prepare_prune(contributions, current_pressure_tokens, threshold_tokens, context)
     if prepared is None:
         return None
-    parsed_contributions, config, route, target_tokens, pressure = prepared
+    parsed_contributions, config, route, target_tokens, threshold, pressure = prepared
 
     required_savings = max(0, pressure - target_tokens)
+    threshold_savings = max(0, pressure - threshold)
+    fallback_savings = _fallback_savings(required_savings, threshold_savings)
 
     now_ms = resolve_now_ms(parsed_contributions, context)
     groups = build_groups(parsed_contributions, config, now_ms)
-    pruned_groups = select_pruned_groups(groups, route, required_savings, config)
+    pruned_groups = select_pruned_groups(
+        groups,
+        route,
+        required_savings,
+        config,
+        fallback_savings=fallback_savings,
+    )
     if pruned_groups is None:
+        _record_structured_pruning(
+            enabled=config.accounting_enabled,
+            context=context,
+            stats=StructuredPruningStats(insufficient_eligible_savings=threshold_savings),
+        )
         return None
 
-    retained, saved_tokens, pruned_count = apply_pruned_groups(
+    attempted_count = sum(len(group.contributions) for group in pruned_groups)
+    applied = apply_pruned_groups(
         parsed_contributions,
         pruned_groups,
         context,
     )
-    if retained is None:
+    if applied is None:
+        _record_structured_pruning(
+            enabled=config.accounting_enabled,
+            context=context,
+            stats=StructuredPruningStats(
+                attempted_count=attempted_count,
+                insufficient_eligible_savings=threshold_savings,
+            ),
+        )
         return None
 
-    if config.accounting_enabled:
+    if threshold_savings > 0 and applied.saved_tokens < threshold_savings:
+        _record_structured_pruning(
+            enabled=config.accounting_enabled,
+            context=context,
+            stats=StructuredPruningStats(
+                attempted_count=attempted_count,
+                rescued_count=applied.rescued_count,
+                insufficient_eligible_savings=threshold_savings - applied.saved_tokens,
+            ),
+        )
+        return None
+
+    _record_structured_pruning(
+        enabled=config.accounting_enabled,
+        context=context,
+        pruned_count=applied.pruned_count,
+        saved_tokens=applied.saved_tokens,
+        stats=StructuredPruningStats(
+            attempted_count=attempted_count,
+            rescued_count=applied.rescued_count,
+        ),
+    )
+
+    effective_messages = provider_messages_from_contributions(applied.retained)
+    effective_tools = provider_tools_from_contributions(applied.retained)
+
+    result: StructuredPruningResult = {
+        "effective_contributions": [c.original for c in applied.retained],
+        "effective_messages": effective_messages,
+        "effective_system_prompt": "",
+        "effective_tools": effective_tools,
+        "accounting": {
+            "saved_tokens": applied.saved_tokens,
+            "pruned_count": applied.pruned_count,
+            "pruned_groups": len(pruned_groups),
+            "attempted_count": attempted_count,
+            "rescued_count": applied.rescued_count,
+            "insufficient_eligible_savings": 0,
+        },
+    }
+    return result
+
+
+def _record_structured_pruning(
+    *,
+    enabled: bool,
+    context: dict[str, JsonValue],
+    pruned_count: int = 0,
+    saved_tokens: int = 0,
+    stats: StructuredPruningStats | None = None,
+) -> None:
+    if enabled:
         with contextlib.suppress(Exception):
             record_structured_pruning(
                 pruned_count=pruned_count,
                 saved_tokens=saved_tokens,
                 phase=_string_context(context, "phase"),
+                stats=stats,
             )
 
-    effective_messages = _provider_messages_from_contributions(retained)
-    effective_tools = _provider_tools_from_contributions(retained)
 
-    result: StructuredPruningResult = {
-        "effective_contributions": [c.original for c in retained],
-        "effective_messages": effective_messages,
-        "effective_system_prompt": "",
-        "effective_tools": effective_tools,
-        "accounting": {
-            "saved_tokens": saved_tokens,
-            "pruned_count": pruned_count,
-            "pruned_groups": len(pruned_groups),
-        },
-    }
-    return result
+def _fallback_savings(required_savings: int, threshold_savings: int) -> int:
+    if threshold_savings <= 0:
+        return 0
+    return min(required_savings, threshold_savings * 4)
 
 
 def _prepare_prune(
@@ -115,7 +182,7 @@ def _prepare_prune(
     current_pressure_tokens: int | None,
     threshold_tokens: int | None,
     context: dict[str, JsonValue],
-) -> tuple[tuple[ContributionInternal, ...], PruningConfig, PressureRoute, int, int] | None:
+) -> tuple[tuple[ContributionInternal, ...], PruningConfig, PressureRoute, int, int, int] | None:
     config = parse_config(context)
     if config is None or not config.enabled:
         return None
@@ -143,7 +210,7 @@ def _prepare_prune(
         return None
 
     route = PressureRoute.HARD if pressure >= effective_threshold else PressureRoute.SOFT
-    return parsed_contributions, config, route, target_tokens, pressure
+    return parsed_contributions, config, route, target_tokens, effective_threshold, pressure
 
 
 def _resolve_threshold(
@@ -213,84 +280,3 @@ def _int_context(context: dict[str, JsonValue], key: str) -> int | None:
 def _string_context(context: dict[str, JsonValue], key: str) -> str:
     value = context.get(key)
     return value if isinstance(value, str) else ""
-
-
-def _provider_messages_from_contributions(
-    retained: list[ContributionInternal],
-) -> list[dict[str, JsonValue]]:
-    """Reconstruct a provider-shaped message list from retained contributions."""
-    system_parts: list[str] = []
-    messages: list[dict[str, JsonValue]] = []
-    for contribution in retained:
-        if contribution.kind == "system_part":
-            system_parts.append(contribution.original["content"])
-            continue
-        if contribution.kind == "tool_schema":
-            continue
-        provider_message = contribution.original.get("provider_message")
-        if isinstance(provider_message, dict):
-            messages.append(dict(provider_message))
-            continue
-        message = _provider_message_from_contribution(contribution)
-        if message is not None:
-            messages.append(message)
-
-    result: list[dict[str, JsonValue]] = []
-    if system_parts:
-        system_content = "\n\n".join(part for part in system_parts if part)
-        if system_content:
-            result.append({"role": "system", "content": system_content})
-    result.extend(messages)
-    return result
-
-
-def _provider_message_from_contribution(
-    contribution: ContributionInternal,
-) -> dict[str, JsonValue] | None:
-    """Map a single retained contribution to a provider API message shape."""
-    content = contribution.original["content"]
-    if contribution.class_ == "user_message":
-        return {"role": "user", "content": content}
-    if contribution.class_ == "assistant_message":
-        message: dict[str, JsonValue] = {"role": "assistant", "content": content}
-        tool_calls = contribution.original.get("tool_calls")
-        if tool_calls:
-            message["tool_calls"] = tool_calls
-        return message
-    name = _tool_name_for_class(contribution.class_)
-    return {
-        "role": "tool",
-        "content": content,
-        "name": name,
-        "tool_call_id": contribution.atomic_group_id or "",
-    }
-
-
-def _tool_name_for_class(class_: str) -> str:
-    if class_ == "terminal_tool_output":
-        return "terminal"
-    if class_ == "exact_file_read":
-        return "read_file"
-    return "tool"
-
-
-def _provider_tools_from_contributions(
-    retained: list[ContributionInternal],
-) -> list[dict[str, JsonValue]] | None:
-    """Reconstruct provider-shaped tool schemas from retained tool-schema contributions."""
-    tools: list[dict[str, JsonValue]] = []
-    for contribution in retained:
-        if contribution.kind != "tool_schema":
-            continue
-        provider_tool = contribution.original.get("provider_tool")
-        if isinstance(provider_tool, dict):
-            tools.append(dict(provider_tool))
-            continue
-        content = contribution.original["content"]
-        try:
-            parsed = parse_json(content)
-        except Exception:  # noqa: BLE001, S112 - tool-schema JSON parse failures are best-effort
-            continue
-        if isinstance(parsed, dict):
-            tools.append(parsed)
-    return tools or None

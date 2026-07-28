@@ -3,10 +3,17 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable
+from copy import deepcopy
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeAlias, cast
 
-from tests.host_fixtures import HermesHost, HookOnlyHost, MiddlewareHost, extract_hex_handle
+from tests.host_fixtures import (
+    HermesHost,
+    HermesToollessHost,
+    HookOnlyHost,
+    MiddlewareHost,
+    extract_hex_handle,
+)
 from tokenjuice_hermes.json_types import JsonValue, parse_json
 from tokenjuice_hermes.plugin import register
 from tokenjuice_hermes.rescue_store import BlobStore
@@ -250,6 +257,9 @@ _STRUCTURED_PRUNING_TEST_CONFIG: dict[str, bool | int | str] = {
 
 
 _DETERMINISTIC_EPOCH_MS: int = 10_000_000_000
+_PRODUCTION_PRESSURE_TOKENS: int = 332_661
+_PRODUCTION_THRESHOLD_TOKENS: int = 316_200
+_PRODUCTION_TARGET_TOKENS: int = 237_150
 
 
 def _prune_structured_context(
@@ -348,6 +358,95 @@ def _pressure_over_threshold(cfg: dict[str, bool | int | str]) -> int:
     assert isinstance(threshold, int)
     assert isinstance(min_saved, int)
     return threshold + min_saved
+
+
+def _spread_tokens(total: int, count: int) -> list[int]:
+    base = total // count
+    remainder = total % count
+    return [base + (1 if index < remainder else 0) for index in range(count)]
+
+
+def _production_snapshot_contributions() -> list[Contribution]:
+    contributions: list[Contribution] = []
+    for index, tokens in enumerate(_spread_tokens(3_617, 115)):
+        contributions.append(
+            _contribution(
+                contribution_id=f"assistant-{index}",
+                kind="message",
+                provenance="conversation_history",
+                class_="assistant_message",
+                stability="turn_ephemeral",
+                token_estimate=tokens,
+                prune_policy="never",
+                content=f"assistant {index}",
+            )
+        )
+    for index, tokens in enumerate(_spread_tokens(14_537, 19)):
+        contributions.append(
+            _contribution(
+                contribution_id=f"user-{index}",
+                kind="message",
+                provenance="conversation_history",
+                class_="user_message",
+                stability="session_stable",
+                token_estimate=tokens,
+                prune_policy="never",
+                content=f"user {index}",
+            )
+        )
+    for index, tokens in enumerate(_spread_tokens(83_793, 79)):
+        diagnostic_content = numbered_lines(f"diagnostic {index}", max(80, tokens // 5))
+        contributions.append(
+            _contribution(
+                contribution_id=f"diagnostic-{index}",
+                kind="tool_interaction",
+                provenance="conversation_history",
+                class_="diagnostic",
+                stability="turn_ephemeral",
+                token_estimate=tokens,
+                prune_policy="never",
+                content=diagnostic_content,
+                provider_message={
+                    "role": "tool",
+                    "tool_call_id": f"diagnostic-call-{index}",
+                    "name": "diagnostics",
+                    "content": diagnostic_content,
+                },
+            )
+        )
+    for index, tokens in enumerate(_spread_tokens(71_340, 33)):
+        contributions.append(
+            _contribution(
+                contribution_id=f"read-file-{index}",
+                kind="tool_interaction",
+                provenance="conversation_history",
+                class_="exact_file_read",
+                stability="stable_prefix",
+                token_estimate=tokens,
+                prune_policy="never",
+                content=f"exact file bytes {index}",
+                provider_message={
+                    "role": "tool",
+                    "tool_call_id": f"read-call-{index}",
+                    "name": "read_file",
+                    "content": f"exact file bytes {index}",
+                },
+            )
+        )
+    for index, tokens in enumerate(_spread_tokens(2_956, 25)):
+        contributions.append(
+            _contribution(
+                contribution_id=f"terminal-{index}",
+                kind="tool_interaction",
+                provenance="conversation_history",
+                class_="terminal_tool_output",
+                stability="turn_ephemeral",
+                token_estimate=tokens,
+                prune_policy="hard_clear_allowed",
+                content=f"terminal {index}",
+            )
+        )
+    return contributions
 
 
 class TestStructuredPruningPolicy:
@@ -645,6 +744,138 @@ class TestStructuredPruningPolicy:
         assert len(read_messages) == 1
         assert read_messages[0].get("content") == "exact file bytes"
         assert result["accounting"]["saved_tokens"] >= 2_500
+
+    def test_production_snapshot_rescues_live_diagnostics_below_threshold(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        cfg = dict(_STRUCTURED_PRUNING_TEST_CONFIG)
+        cfg["tokenjuice_prompt_pruning_threshold_tokens"] = _PRODUCTION_THRESHOLD_TOKENS
+        cfg["tokenjuice_prompt_pruning_hard_target_ratio"] = 75
+        cfg["tokenjuice_prompt_pruning_protect_recent_messages"] = 0
+        cfg["tokenjuice_prompt_pruning_protect_recent_tool_interactions"] = 0
+        cfg["tokenjuice_rescue_store_path"] = str(tmp_path)
+        host = HermesHost(config=cast("dict[str, JsonValue]", cfg), session_id="session-a")
+        register(host)
+        callback = host.callbacks["structured_context_prune"]
+        contributions = _production_snapshot_contributions()
+        original_contributions = deepcopy(contributions)
+
+        result = callback(
+            contributions,
+            phase="pre_api",
+            session_id="session-a",
+            current_pressure_tokens=_PRODUCTION_PRESSURE_TOKENS,
+            threshold_tokens=_PRODUCTION_THRESHOLD_TOKENS,
+            target_tokens=_PRODUCTION_TARGET_TOKENS,
+            now_epoch_ms=_DETERMINISTIC_EPOCH_MS,
+        )
+
+        assert isinstance(result, dict)
+        pruned = cast("StructuredPruningResult", cast("object", result))
+        accounting = pruned["accounting"]
+        saved_tokens = accounting["saved_tokens"]
+        assert saved_tokens < _PRODUCTION_PRESSURE_TOKENS - _PRODUCTION_TARGET_TOKENS
+        assert _PRODUCTION_PRESSURE_TOKENS - saved_tokens < _PRODUCTION_THRESHOLD_TOKENS
+        assert accounting["rescued_count"] > 0
+        assert accounting["attempted_count"] > 0
+
+        messages = pruned["effective_messages"]
+        diagnostic_messages = [
+            message for message in messages if message.get("name") == "diagnostics"
+        ]
+        assert diagnostic_messages
+        rescued_content = next(
+            content
+            for content in (message.get("content") for message in diagnostic_messages)
+            if isinstance(content, str) and extract_hex_handle(content) is not None
+        )
+        handle = extract_hex_handle(rescued_content)
+        assert handle is not None
+        fetched = BlobStore({"store_path": str(tmp_path)}).fetch(
+            handle,
+            "full",
+            session_id="session-a",
+        )
+        assert any(
+            contribution["content"] == fetched
+            for contribution in contributions
+            if contribution["class"] == "diagnostic"
+        )
+
+        read_file_messages = [message for message in messages if message.get("name") == "read_file"]
+        assert len(read_file_messages) == 33
+        assert read_file_messages[0].get("content") == "exact file bytes 0"
+        assert contributions == original_contributions
+
+        second_result = callback(
+            pruned["effective_contributions"],
+            phase="pre_api",
+            session_id="session-a",
+            current_pressure_tokens=_PRODUCTION_PRESSURE_TOKENS,
+            threshold_tokens=_PRODUCTION_THRESHOLD_TOKENS,
+            target_tokens=_PRODUCTION_TARGET_TOKENS,
+            now_epoch_ms=_DETERMINISTIC_EPOCH_MS,
+        )
+        if second_result is not None:
+            assert isinstance(second_result, dict)
+            second = cast("StructuredPruningResult", cast("object", second_result))
+            second_messages = second["effective_messages"]
+            assert [
+                message.get("content")
+                for message in second_messages
+                if message.get("name") == "diagnostics"
+            ] == [message.get("content") for message in diagnostic_messages]
+
+    def test_production_snapshot_fails_open_without_fetch_tool(self, tmp_path: Path) -> None:
+        cfg = dict(_STRUCTURED_PRUNING_TEST_CONFIG)
+        cfg["tokenjuice_prompt_pruning_threshold_tokens"] = _PRODUCTION_THRESHOLD_TOKENS
+        cfg["tokenjuice_prompt_pruning_protect_recent_messages"] = 0
+        cfg["tokenjuice_prompt_pruning_protect_recent_tool_interactions"] = 0
+        cfg["tokenjuice_rescue_store_path"] = str(tmp_path)
+        host = HermesToollessHost(config=cast("dict[str, JsonValue]", cfg), session_id="session-a")
+        register(host)
+        callback = host.callbacks["structured_context_prune"]
+        contributions = _production_snapshot_contributions()
+
+        result = callback(
+            contributions,
+            phase="pre_api",
+            session_id="session-a",
+            current_pressure_tokens=_PRODUCTION_PRESSURE_TOKENS,
+            threshold_tokens=_PRODUCTION_THRESHOLD_TOKENS,
+            target_tokens=_PRODUCTION_TARGET_TOKENS,
+            now_epoch_ms=_DETERMINISTIC_EPOCH_MS,
+        )
+
+        assert result is None
+        assert contributions == _production_snapshot_contributions()
+
+    def test_production_snapshot_fails_open_when_rescue_store_fails(self, tmp_path: Path) -> None:
+        store_file = tmp_path / "not-a-directory"
+        _ = store_file.write_text("occupied", encoding="utf-8")
+        cfg = dict(_STRUCTURED_PRUNING_TEST_CONFIG)
+        cfg["tokenjuice_prompt_pruning_threshold_tokens"] = _PRODUCTION_THRESHOLD_TOKENS
+        cfg["tokenjuice_prompt_pruning_protect_recent_messages"] = 0
+        cfg["tokenjuice_prompt_pruning_protect_recent_tool_interactions"] = 0
+        cfg["tokenjuice_rescue_store_path"] = str(store_file)
+        host = HermesHost(config=cast("dict[str, JsonValue]", cfg), session_id="session-a")
+        register(host)
+        callback = host.callbacks["structured_context_prune"]
+        contributions = _production_snapshot_contributions()
+
+        result = callback(
+            contributions,
+            phase="pre_api",
+            session_id="session-a",
+            current_pressure_tokens=_PRODUCTION_PRESSURE_TOKENS,
+            threshold_tokens=_PRODUCTION_THRESHOLD_TOKENS,
+            target_tokens=_PRODUCTION_TARGET_TOKENS,
+            now_epoch_ms=_DETERMINISTIC_EPOCH_MS,
+        )
+
+        assert result is None
+        assert contributions == _production_snapshot_contributions()
 
     def test_recent_messages_are_protected(self) -> None:
         cfg = dict(_STRUCTURED_PRUNING_TEST_CONFIG)

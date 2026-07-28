@@ -62,9 +62,9 @@ def register(ctx: HookRegistrar) -> None:
     hook_config = _flat_json_config(config)
 
     _ = _try_register_named_middleware(ctx, "llm_request", prune_llm_request)
-    _ = _try_register_structured_pruning_hook(ctx, config)
-
     fetch_available = _try_register_fetch_tool(ctx, config)
+    structured_config = {**config, "tokenjuice_rescue_fetch_available": fetch_available}
+    _ = _try_register_structured_pruning_hook(ctx, structured_config)
     _ = _try_register_passref_middleware(ctx, config)
     _ = _try_register_status_tool(ctx, config)
 

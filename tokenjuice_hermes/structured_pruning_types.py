@@ -72,6 +72,9 @@ class StructuredPruningAccounting(TypedDict):
     saved_tokens: int
     pruned_count: int
     pruned_groups: int
+    attempted_count: int
+    rescued_count: int
+    insufficient_eligible_savings: int
 
 
 class StructuredPruningResult(TypedDict):

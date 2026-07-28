@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
 from .rescue_excerpt import build_excerpt
@@ -22,20 +23,29 @@ class RescueReplacementError(Exception):
     """Raised when selected rescue-backed pruning cannot produce a fetchable handle."""
 
 
+@dataclass(frozen=True, slots=True)
+class AppliedPruning:
+    retained: list[ContributionInternal]
+    saved_tokens: int
+    pruned_count: int
+    rescued_count: int
+
+
 def apply_pruned_groups(
     parsed_contributions: tuple[ContributionInternal, ...],
     pruned_groups: list[Group],
     context: dict[str, JsonValue],
-) -> tuple[list[ContributionInternal], int, int] | tuple[None, int, int]:
+) -> AppliedPruning | None:
     """Apply selected pruning groups, replacing rescue-backed classes with fetchable excerpts."""
     pruned_by_id = {c.id: c for group in pruned_groups for c in group.contributions}
     replacements = _rescue_replacements(pruned_by_id, context)
     if replacements is None:
-        return None, 0, 0
+        return None
 
     retained: list[ContributionInternal] = []
     saved_tokens = 0
     pruned_count = 0
+    rescued_count = 0
     for contribution in parsed_contributions:
         selected = pruned_by_id.get(contribution.id)
         if selected is None:
@@ -51,8 +61,9 @@ def apply_pruned_groups(
         retained.append(replacement)
         saved_tokens += max(0, contribution.token_estimate - replacement.token_estimate)
         pruned_count += 1
+        rescued_count += 1
 
-    return retained, saved_tokens, pruned_count
+    return AppliedPruning(retained, saved_tokens, pruned_count, rescued_count)
 
 
 def _rescue_replacements(
@@ -86,6 +97,9 @@ def _rescue_contribution(
     store: BlobStore,
     session_id: str,
 ) -> ContributionInternal:
+    if contribution.original["content"].startswith("[tokenjuice-hermes: tool result rescued."):
+        return contribution
+
     tool_name = _provider_tool_name(contribution)
     handle = store.put(contribution.original["content"], tool_name=tool_name, session_id=session_id)
     if not handle:

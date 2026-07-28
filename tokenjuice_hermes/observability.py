@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar, Final
 
@@ -36,7 +37,10 @@ class _Counters:
         "passref_truncated_count",
         "rescue_chars_saved",
         "rescue_count",
+        "structured_pruning_attempted_count",
         "structured_pruning_count",
+        "structured_pruning_insufficient_eligible_savings",
+        "structured_pruning_rescued_count",
         "structured_pruning_saved_tokens",
     )
 
@@ -53,11 +57,21 @@ class _Counters:
         self.passref_truncated_count: int = 0
         self.passref_budget_exceeded_count: int = 0
         self.passref_chars_expanded: int = 0
+        self.structured_pruning_attempted_count: int = 0
         self.structured_pruning_count: int = 0
+        self.structured_pruning_rescued_count: int = 0
+        self.structured_pruning_insufficient_eligible_savings: int = 0
         self.structured_pruning_saved_tokens: int = 0
 
 
 _COUNTERS: Final[_Counters] = _Counters()
+
+
+@dataclass(frozen=True, slots=True)
+class StructuredPruningStats:
+    attempted_count: int = 0
+    rescued_count: int = 0
+    insufficient_eligible_savings: int = 0
 
 
 def reset_stats() -> None:
@@ -74,7 +88,10 @@ def reset_stats() -> None:
     _COUNTERS.passref_truncated_count = 0
     _COUNTERS.passref_budget_exceeded_count = 0
     _COUNTERS.passref_chars_expanded = 0
+    _COUNTERS.structured_pruning_attempted_count = 0
     _COUNTERS.structured_pruning_count = 0
+    _COUNTERS.structured_pruning_rescued_count = 0
+    _COUNTERS.structured_pruning_insufficient_eligible_savings = 0
     _COUNTERS.structured_pruning_saved_tokens = 0
 
 
@@ -139,6 +156,7 @@ def record_structured_pruning(
     saved_tokens: int,
     phase: str = "",
     redacted: list[dict[str, object]] | None = None,
+    stats: StructuredPruningStats | None = None,
 ) -> None:
     """Record aggregate structured pruning counters.
 
@@ -147,9 +165,18 @@ def record_structured_pruning(
     """
     _ = phase
     _ = redacted
+    current_stats = stats or StructuredPruningStats()
     with contextlib.suppress(Exception):
+        if current_stats.attempted_count > 0:
+            _COUNTERS.structured_pruning_attempted_count += current_stats.attempted_count
         if pruned_count > 0:
             _COUNTERS.structured_pruning_count += pruned_count
+        if current_stats.rescued_count > 0:
+            _COUNTERS.structured_pruning_rescued_count += current_stats.rescued_count
+        if current_stats.insufficient_eligible_savings > 0:
+            _COUNTERS.structured_pruning_insufficient_eligible_savings += (
+                current_stats.insufficient_eligible_savings
+            )
         if saved_tokens > 0:
             _COUNTERS.structured_pruning_saved_tokens += saved_tokens
 
@@ -238,7 +265,12 @@ def status_snapshot(store_path: str = "") -> dict[str, object]:
         "passref_truncated_count": _COUNTERS.passref_truncated_count,
         "passref_budget_exceeded_count": _COUNTERS.passref_budget_exceeded_count,
         "passref_chars_expanded": _COUNTERS.passref_chars_expanded,
+        "structured_pruning_attempted_count": _COUNTERS.structured_pruning_attempted_count,
         "structured_pruning_count": _COUNTERS.structured_pruning_count,
+        "structured_pruning_rescued_count": _COUNTERS.structured_pruning_rescued_count,
+        "structured_pruning_insufficient_eligible_savings": (
+            _COUNTERS.structured_pruning_insufficient_eligible_savings
+        ),
         "structured_pruning_saved_tokens": _COUNTERS.structured_pruning_saved_tokens,
         "store": store_stats,
     }
