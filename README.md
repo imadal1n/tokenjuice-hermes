@@ -18,9 +18,10 @@ registration hooks.
 - Adds smart structured pruning for Hermes hosts that expose
   `structured_context_prune`, shaping a temporary provider-bound view before
   Hermes' pressure gates run.
-- Rescues oversized web/MCP/browser results into a session-scoped blob store and
-  emits a preview plus an opaque `rescuer_fetch` handle. Deployment profiles can
-  also opt terminal-like tools into rescue before omitted-middle compaction.
+- Rescues oversized web/MCP/browser results into a session-scoped blob store,
+  records ownership in SQLite, and emits a preview plus an opaque
+  `rescuer_fetch` handle. Deployment profiles can also opt terminal-like tools
+  into rescue before omitted-middle compaction.
 - Optionally expands rescued handles inside later tool requests through passref.
   Passref is disabled by default and requires an explicit allowlist.
 - Exposes a read-only `tokenjuice_status` tool that returns aggregate counters
@@ -110,6 +111,11 @@ $HERMES_HOME/plugins/tokenjuice-hermes/
   rescue_grep.py
   rescue_handles.py
   rescue_index.py
+  rescue_sqlite.py
+  rescue_sqlite_maintenance.py
+  rescue_sqlite_migration.py
+  rescue_sqlite_schema.py
+  rescue_sqlite_types.py
   rescue_store.py
   rescue_sweep.py
   rescue_transform.py

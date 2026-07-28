@@ -115,19 +115,31 @@ The rescue store keeps content and indexes under `tokenjuice_rescue_store_path`:
 
 ```text
 <store_path>/
-  blobs/      # content-addressed blob files (12-hex handles)
-  sessions/   # per-session JSON indexes mapping handles to metadata
+  blobs/                       # content-addressed blob files (12-hex handles)
+  ownership.sqlite3            # sessions, blob metadata, and session ownership
+  ownership.sqlite3.migrated   # marker after legacy JSON index migration
+  sessions/                    # legacy JSON indexes read as migration input
+  migration-quarantine/        # unreadable non-empty legacy indexes, if any
 ```
 
-Writes are atomic. `lazy_sweep` tombstones expired blobs, removes unreferenced
-content, and enforces the size cap by deleting oldest content first. Tombstones
-remain for the secondary TTL so fetch can return a clear swept marker.
+SQLite initialization creates or upgrades the ownership schema transactionally.
+Older `sessions/*.json` indexes are migrated into `ownership.sqlite3`; the marker
+is written only after readable legacy indexes are fully processed, so incomplete
+migrations retry on the next startup. Unreadable non-empty legacy indexes are
+copied to `migration-quarantine/` and leave the marker absent.
+
+Writes are atomic. Blob reuse requires the existing content to match the recorded
+full hash and size, so corrupt bytes are not served as a valid rescue result.
+`lazy_sweep` tombstones expired ownership rows, removes unreferenced content, and
+enforces the size cap by deleting oldest content first. Tombstones remain for the
+secondary TTL so fetch can return a clear swept marker; tombstone rows do not
+need a matching blob row.
 
 The `tokenjuice_status` store report contains:
 
 | Field | Meaning |
 |---|---|
-| `live_blob_count` | Live blobs across all session indexes. |
+| `live_blob_count` | Live ownership rows across the rescue store. |
 | `tombstone_count` | Swept blobs kept as tombstones. |
 | `total_blob_bytes` | Total bytes of blob files on disk. |
 | `blob_file_count` | Number of blob files on disk. |
@@ -160,6 +172,11 @@ $HERMES_HOME/plugins/tokenjuice-hermes/
   rescue_grep.py
   rescue_handles.py
   rescue_index.py
+  rescue_sqlite.py
+  rescue_sqlite_maintenance.py
+  rescue_sqlite_migration.py
+  rescue_sqlite_schema.py
+  rescue_sqlite_types.py
   rescue_store.py
   rescue_sweep.py
   rescue_transform.py
