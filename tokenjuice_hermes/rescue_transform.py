@@ -7,6 +7,7 @@ terminal-like compaction behavior.
 
 from __future__ import annotations
 
+import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final
@@ -62,7 +63,7 @@ def transform_rescue_result(
     try:
         store = BlobStore({"store_path": store_path})
         handle = store.put(text, tool_name=tool_name, session_id=options.session_id)
-    except (OSError, ValueError):
+    except (OSError, RuntimeError, ValueError, sqlite3.Error):
         return None
 
     if not handle:

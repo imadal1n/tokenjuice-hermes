@@ -17,6 +17,8 @@ from typing import ClassVar, Final
 
 from .rescue_handles import is_valid_handle
 from .rescue_index import read_idx_file
+from .rescue_sqlite import store_stats
+from .rescue_sqlite_types import DB_NAME
 
 VERSION: Final[str] = "0.1.0"
 
@@ -183,6 +185,10 @@ def record_structured_pruning(
 
 def _count_index_entries(meta_dir: Path) -> tuple[int, int]:
     """Return (live_count, tombstone_count) across all session indices."""
+    store_root = meta_dir.parent
+    if (store_root / DB_NAME).exists():
+        stats = store_stats(store_root)
+        return stats.live_count, stats.tombstone_count
     live_count = 0
     tombstone_count = 0
     try:
