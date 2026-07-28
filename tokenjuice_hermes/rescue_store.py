@@ -14,29 +14,14 @@ before deleting content no session references.
 from __future__ import annotations
 
 import contextlib
-import hashlib
 import os
 import tempfile
-import threading
 import time
 from pathlib import Path
 from typing import cast
 
 from .rescue_handles import is_valid_handle, normalize_handle
-from .rescue_index import (
-    HASH_KEY,
-    SIZE_KEY,
-    TOOL_KEY,
-    BlobEntry,
-    find_meta,
-    idx_path,
-    is_live,
-    load_idx,
-    read_idx_file,
-    save_idx,
-    tombstone_message,
-)
-from .rescue_sweep import sweep_by_size, sweep_by_ttl
+from .rescue_sqlite import OwnershipStore
 from .rescue_types import (
     DEFAULT_FETCH_MAX_CHARS,
     DEFAULT_FULL_FETCH_MAX_CHARS,
@@ -48,21 +33,18 @@ from .rescue_types import (
     BlobStoreConfig,
 )
 
-_LIVE_KEY: str = "t"
-
 
 class BlobStore:
     """Stdlib-only persistent rescue blob store."""
 
     cfg: BlobStoreConfig
-    _lock: threading.Lock
+    _ownership: OwnershipStore
     blob_dir: Path
     meta_dir: Path
 
     def __init__(self, cfg: BlobStoreConfig | dict[str, object]) -> None:
         """Open or create the store rooted at the configured path."""
         self.cfg = cast("BlobStoreConfig", cfg)
-        self._lock = threading.Lock()
         store_path = cfg.get("store_path", RESCUE_STORE_PATH_DEFAULT)
         if not isinstance(store_path, str):
             store_path = RESCUE_STORE_PATH_DEFAULT
@@ -72,6 +54,7 @@ class BlobStore:
         try:
             self.blob_dir.mkdir(parents=True, exist_ok=True)
             self.meta_dir.mkdir(parents=True, exist_ok=True)
+            self._ownership = OwnershipStore(base)
         except PermissionError:
             pass
 
@@ -86,37 +69,19 @@ class BlobStore:
         """
         if not session_id:
             return ""
-        raw = content.encode("utf-8")
-        bhash = hashlib.sha256(raw).hexdigest()
-        handle = bhash[:12]
-        bpath = self.blob_dir / handle
-        with self._lock:
-            if not bpath.exists():
-                self._atomic_write(bpath, raw)
-            idx = load_idx(self.meta_dir, session_id)
-            blobs = idx.get("blobs", {})
-            blobs[handle] = cast(
-                "BlobEntry",
-                cast(
-                    "object",
-                    {
-                        _LIVE_KEY: time.time(),
-                        TOOL_KEY: tool_name,
-                        SIZE_KEY: len(raw),
-                        HASH_KEY: bhash,
-                    },
-                ),
-            )
-            idx["blobs"] = blobs
-            save_idx(self.meta_dir, idx, session_id)
-        return handle
+        ownership = self._ownership_or_none()
+        if ownership is None:
+            return ""
+        return ownership.put(content, tool_name, session_id)
 
     def session_references(self, handle: str, session_id: str) -> bool:
         """Return whether *session_id* owns a live (non-tombstoned) *handle*."""
         if not session_id or not is_valid_handle(handle):
             return False
-        entry = read_idx_file(idx_path(self.meta_dir, session_id)).get("blobs", {}).get(handle)
-        return bool(entry) and is_live(entry)
+        ownership = self._ownership_or_none()
+        if ownership is None:
+            return False
+        return ownership.session_references(handle, session_id)
 
     def has_blob(self, handle: str) -> bool:
         """Return whether decoded blob content exists on disk."""
@@ -171,9 +136,9 @@ class BlobStore:
         tomb_ttl = self.cfg.get("tombstone_ttl_hours", DEFAULT_TOMBSTONE_TTL_HOURS) * 3600
         max_mb = self.cfg.get("max_store_mb", DEFAULT_MAX_STORE_MB)
         now = time.time()
-        with self._lock:
-            sweep_by_ttl(self.meta_dir, self.blob_dir, now, ttl, tomb_ttl)
-            sweep_by_size(self.meta_dir, self.blob_dir, now, max_mb)
+        ownership = self._ownership_or_none()
+        if ownership is not None:
+            ownership.sweep(now, ttl, tomb_ttl, max_mb)
 
     # ─── internal helpers ───────────────────────────────────────────────
 
@@ -183,11 +148,20 @@ class BlobStore:
         if not session_id:
             return "Error: session ID required to fetch a handle"
         if not self.session_references(handle, session_id):
-            tomb = tombstone_message(self.meta_dir, handle, session_id)
+            ownership = self._ownership_or_none()
+            tomb = (
+                ownership.tombstone_message(handle, session_id) if ownership is not None else None
+            )
             if tomb:
                 return tomb
             return f"Error: handle {handle} not available in this session"
         return None
+
+    def _ownership_or_none(self) -> OwnershipStore | None:
+        try:
+            return self._ownership
+        except AttributeError:
+            return None
 
     def _blob_path(self, handle: str) -> Path | None:
         if not is_valid_handle(handle):
@@ -210,33 +184,33 @@ class BlobStore:
     def _fetch_stat(self, handle: str, session_id: str) -> str:
         bpath = self._blob_path(handle)
         if bpath is None or not bpath.exists():
-            return tombstone_message(self.meta_dir, handle, session_id) or (
+            return self._ownership.tombstone_message(handle, session_id) or (
                 f"Error: handle {handle} not found (may have been swept)"
             )
         try:
             st = bpath.stat()
         except OSError:
-            return tombstone_message(self.meta_dir, handle, session_id) or (
+            return self._ownership.tombstone_message(handle, session_id) or (
                 f"Error: handle {handle} not found (may have been swept)"
             )
-        meta = find_meta(self.meta_dir, handle, session_id)
+        meta = self._ownership.find_meta(handle, session_id)
         return (
             f"blob: {handle}\n"
             f"size: {st.st_size:,} bytes\n"
             f"stored: {time.ctime(st.st_ctime)}\n"
-            f"tool: {meta.get(TOOL_KEY, '?')}"
+            f"tool: {meta.tool}"
         )
 
     def _read_blob_text(self, handle: str, session_id: str) -> str:
         bpath = self._blob_path(handle)
         if bpath is None or not bpath.exists():
-            return tombstone_message(self.meta_dir, handle, session_id) or (
+            return self._ownership.tombstone_message(handle, session_id) or (
                 f"Error: handle {handle} not found (may have been swept)"
             )
         try:
             raw = bpath.read_bytes()
         except FileNotFoundError:
-            return tombstone_message(self.meta_dir, handle, session_id) or (
+            return self._ownership.tombstone_message(handle, session_id) or (
                 f"Error: handle {handle} not found (may have been swept)"
             )
         try:
