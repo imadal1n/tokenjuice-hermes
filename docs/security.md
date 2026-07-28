@@ -5,8 +5,10 @@
 - `read_file` is exact. It is not compacted, rescued, or passref-expanded.
 - Diagnostics stay exact. Error `stderr` and traceback-bearing `output` are
   preserved.
-- Rescue handles are session-scoped. Authorization checks the per-session index,
-  not only the handle shape.
+- Rescue handles are session-scoped. Authorization checks SQLite ownership for
+  the current session, not only the handle shape.
+- Fetch verifies stored blob bytes against the ownership row's full hash and
+  size before serving content.
 - Passref is disabled by default and requires an explicit allowlist.
 - Structured context pruning is disabled by default and only mutates the
   temporary provider-bound view returned to Hermes. It does not rewrite the saved
@@ -51,6 +53,9 @@ These names are never passref-expanded, even if listed in the allowlist:
   markers when passref is enabled.
 - Rescue handles must be 12 lowercase hex characters.
 - Fetch `grep` is literal-only and bounded by match caps and timeout.
+- Existing stores with legacy JSON session indexes migrate to SQLite before use;
+  incomplete legacy migrations leave the marker absent and retry on the next
+  startup instead of silently declaring success.
 - Path traversal attempts are rejected.
 - Invalid structured-pruning config or unknown contribution classes fail open by
   leaving the current-call view unchanged.

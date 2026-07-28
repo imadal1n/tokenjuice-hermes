@@ -69,10 +69,10 @@ Hermes has already evaluated preflight and pre-API compression.
 
 ## Additive Rescue
 
-Eligible oversized web/MCP/browser results can be stored in a per-session blob
-store. Deployment profiles may also opt terminal-like tools such as `terminal`
-and `execute_code` into rescue. The model receives a short preview and an opaque
-`rescuer_fetch` handle.
+Eligible oversized web/MCP/browser results can be stored in a content-addressed
+blob store with session ownership recorded in SQLite. Deployment profiles may
+also opt terminal-like tools such as `terminal` and `execute_code` into rescue.
+The model receives a short preview and an opaque `rescuer_fetch` handle.
 
 Rescue only runs when all of these are true:
 
@@ -113,7 +113,9 @@ Fetch modes:
 | `full` | Full decoded text, refused when over the configured full-fetch cap. |
 
 Every fetch requires a valid handle and matching `session_id`. Cross-session
-access is denied even when the blob file still exists.
+access is denied even when the blob file still exists. Fetch also verifies the
+stored blob against the ownership row's recorded full hash and size before
+serving content; corrupt or mismatched blob bytes are treated as unavailable.
 
 ## Passref
 
@@ -136,8 +138,9 @@ markers. `read_file` and `diagnostics` are hard-exempt.
 When the host exposes `register_tool`, the plugin registers a read-only
 `tokenjuice_status` tool. The response is a JSON object with aggregate counters
 and store statistics. Counters are kept in memory for the process lifetime only;
-store statistics are computed on demand by scanning the rescue store directories
-without creating them.
+store statistics are computed on demand from the SQLite ownership database when
+present, with legacy JSON indexes used only as a fallback for older stores that
+have not migrated yet.
 
 Status fields include:
 
@@ -159,7 +162,7 @@ Status fields include:
 | `structured_pruning_count` | Number of structured pruning decisions that returned an effective view. |
 | `structured_pruning_saved_tokens` | Estimated aggregate tokens removed from effective request views. |
 | `structured_pruning_fallback_count` | Number of structured pruning calls that failed open or could not meet target safely. |
-| `store.live_blob_count` | Live blobs across all session indexes. |
+| `store.live_blob_count` | Live ownership rows across the rescue store. |
 | `store.tombstone_count` | Swept blobs kept as tombstones. |
 | `store.total_blob_bytes` | Total bytes of blob files on disk. |
 | `store.blob_file_count` | Number of blob files on disk. |
