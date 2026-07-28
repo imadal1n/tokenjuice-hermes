@@ -13,6 +13,7 @@ from .rescue_fetch import rescuer_fetch
 from .rescue_store import BlobStore
 from .rescue_types import RESCUE_STORE_PATH_DEFAULT
 from .structured_pruning import prune_structured_context
+from .structured_pruning_memo import StructuredPruningMemo, StructuredPruningMemoRequest
 
 if TYPE_CHECKING:
     from .structured_pruning_types import Contribution
@@ -109,6 +110,7 @@ def _try_register_structured_pruning_hook(
     register_hook = getattr(ctx, "register_hook", None)
     if not callable(register_hook):
         return False
+    memo = StructuredPruningMemo()
 
     def _structured_context_prune(
         contributions: Sequence[Contribution],
@@ -119,15 +121,27 @@ def _try_register_structured_pruning_hook(
     ) -> dict[str, JsonValue] | None:
         merged_config = {**config, **kwargs}
         flat_config = _flat_json_config(merged_config)
-        result = prune_structured_context(
-            contributions,
-            current_pressure_tokens,
-            threshold_tokens,
-            **flat_config,
+
+        def _compute() -> dict[str, JsonValue] | None:
+            result = prune_structured_context(
+                contributions,
+                current_pressure_tokens,
+                threshold_tokens,
+                **flat_config,
+            )
+            if result is None:
+                return None
+            return cast("dict[str, JsonValue]", cast("object", result))
+
+        return memo.reuse_or_compute(
+            StructuredPruningMemoRequest(
+                contributions=contributions,
+                current_pressure_tokens=current_pressure_tokens,
+                threshold_tokens=threshold_tokens,
+                config=flat_config,
+            ),
+            _compute,
         )
-        if result is None:
-            return None
-        return cast("dict[str, JsonValue]", cast("object", result))
 
     try:
         _ = register_hook("structured_context_prune", _structured_context_prune)

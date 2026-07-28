@@ -15,11 +15,14 @@ from tests.host_fixtures import (
     extract_hex_handle,
 )
 from tokenjuice_hermes.json_types import JsonValue, parse_json
+from tokenjuice_hermes.observability import reset_stats, status_snapshot
 from tokenjuice_hermes.plugin import register
 from tokenjuice_hermes.rescue_store import BlobStore
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+
+    from _pytest.monkeypatch import MonkeyPatch
 
     from tokenjuice_hermes.structured_pruning_types import Contribution, StructuredPruningResult
 
@@ -1055,6 +1058,125 @@ class TestStructuredPruningPolicy:
             )
             == diagnostic_content
         )
+
+    def test_registered_structured_pruning_reuses_preflight_result_before_pre_api(
+        self,
+        tmp_path: Path,
+        monkeypatch: MonkeyPatch,
+    ) -> None:
+        cfg = dict(_STRUCTURED_PRUNING_TEST_CONFIG)
+        cfg["tokenjuice_prompt_pruning_threshold_tokens"] = 10_000
+        cfg["tokenjuice_prompt_pruning_protect_recent_messages"] = 0
+        cfg["tokenjuice_prompt_pruning_protect_recent_tool_interactions"] = 0
+        cfg["tokenjuice_rescue_store_path"] = str(tmp_path)
+        host = HermesHost(config=cast("dict[str, JsonValue]", cfg), session_id="session-a")
+        reset_stats()
+        register(host)
+        callback = host.callbacks["structured_context_prune"]
+        diagnostic_content = numbered_lines("idempotent diagnostic", 800)
+        group_id = "call-1"
+        assistant = _contribution(
+            contribution_id="assistant-call",
+            kind="message",
+            provenance="conversation_history",
+            class_="assistant_message",
+            stability="turn_ephemeral",
+            token_estimate=100,
+            prune_policy="never",
+            atomic_group_id=group_id,
+            content="",
+            provider_message={
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": group_id,
+                        "type": "function",
+                        "function": {"name": "diagnostics", "arguments": "{}"},
+                    }
+                ],
+            },
+        )
+        diagnostic = _contribution(
+            contribution_id="diagnostic-result",
+            kind="tool_interaction",
+            provenance="conversation_history",
+            class_="diagnostic",
+            stability="turn_ephemeral",
+            token_estimate=3_000,
+            prune_policy="never",
+            atomic_group_id=group_id,
+            content=diagnostic_content,
+            provider_message={
+                "role": "tool",
+                "tool_call_id": group_id,
+                "name": "diagnostics",
+                "content": diagnostic_content,
+            },
+        )
+        contributions = [assistant, diagnostic]
+        put_count = 0
+        original_put = BlobStore.put
+
+        def counted_put(self: BlobStore, content: str, tool_name: str, session_id: str) -> str:
+            nonlocal put_count
+            put_count += 1
+            return original_put(self, content, tool_name, session_id)
+
+        monkeypatch.setattr(BlobStore, "put", counted_put)
+
+        preflight = callback(
+            contributions,
+            phase="preflight",
+            session_id="session-a",
+            turn_id="turn-a",
+            current_pressure_tokens=11_000,
+            threshold_tokens=10_000,
+            target_tokens=7_500,
+            now_epoch_ms=_DETERMINISTIC_EPOCH_MS,
+        )
+        pre_api = callback(
+            contributions,
+            phase="pre_api",
+            session_id="session-a",
+            turn_id="turn-a",
+            current_pressure_tokens=11_000,
+            threshold_tokens=10_000,
+            target_tokens=7_500,
+            now_epoch_ms=_DETERMINISTIC_EPOCH_MS,
+        )
+
+        assert isinstance(preflight, dict)
+        assert pre_api == preflight
+        preflight_accounting = preflight["accounting"]
+        assert isinstance(preflight_accounting, dict)
+        saved_tokens = preflight_accounting["saved_tokens"]
+        assert isinstance(saved_tokens, int)
+        snapshot = status_snapshot()
+        assert put_count == 1
+        assert snapshot["structured_pruning_count"] == 1
+        assert snapshot["structured_pruning_rescued_count"] == 1
+        assert snapshot["structured_pruning_attempted_count"] == 2
+        assert snapshot["structured_pruning_saved_tokens"] == saved_tokens
+
+        fresh_turn = callback(
+            contributions,
+            phase="pre_api",
+            session_id="session-a",
+            turn_id="turn-b",
+            current_pressure_tokens=11_000,
+            threshold_tokens=10_000,
+            target_tokens=7_500,
+            now_epoch_ms=_DETERMINISTIC_EPOCH_MS,
+        )
+
+        assert fresh_turn == preflight
+        snapshot = status_snapshot()
+        assert put_count == 2
+        assert snapshot["structured_pruning_count"] == 2
+        assert snapshot["structured_pruning_rescued_count"] == 2
+        assert snapshot["structured_pruning_attempted_count"] == 4
+        assert snapshot["structured_pruning_saved_tokens"] == saved_tokens * 2
 
     def test_recent_messages_are_protected(self) -> None:
         cfg = dict(_STRUCTURED_PRUNING_TEST_CONFIG)

@@ -203,6 +203,7 @@ def test_installed_directory_plugin_layout_imports(tmp_path: Path) -> None:
         "structured_pruning_apply.py",
         "structured_pruning_config.py",
         "structured_pruning_groups.py",
+        "structured_pruning_memo.py",
         "structured_pruning_provider.py",
         "structured_pruning_rescue.py",
         "structured_pruning_selection.py",
