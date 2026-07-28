@@ -181,6 +181,24 @@ def test_prefix_collision_fails_closed_without_cross_authorizing(tmp_path: Path)
     )
 
 
+def test_corrupt_existing_blob_is_not_served_or_cross_authorized(tmp_path: Path) -> None:
+    store = BlobStore({"store_path": str(tmp_path)})
+    handle = store.put("same content", tool_name="web_search", session_id="session-a")
+    _ = (tmp_path / "blobs" / handle).write_text("BAD", encoding="utf-8")
+
+    corrupted_fetch = store.fetch(handle, mode="full", session_id="session-a")
+    repaired_handle = BlobStore({"store_path": str(tmp_path)}).put(
+        "same content", tool_name="web_search", session_id="session-b"
+    )
+
+    assert corrupted_fetch != "BAD"
+    assert repaired_handle == handle
+    assert (
+        BlobStore({"store_path": str(tmp_path)}).fetch(handle, mode="full", session_id="session-b")
+        == "same content"
+    )
+
+
 def test_reconcile_tombstones_missing_and_mismatched_live_blobs(tmp_path: Path) -> None:
     store = BlobStore({"store_path": str(tmp_path)})
     missing = store.put("missing data", tool_name="web_search", session_id="session-a")

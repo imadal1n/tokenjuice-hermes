@@ -7,7 +7,7 @@ import sqlite3
 import tempfile
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, cast, final
 
 from .rescue_index import safe_sid
 from .rescue_sqlite_maintenance import MaintenanceContext
@@ -21,7 +21,6 @@ from .rescue_sqlite_types import (
     SCHEMA,
     BlobMeta,
     BlobWrite,
-    ExistsRow,
     ReconcileStats,
     StoreStats,
 )
@@ -30,12 +29,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 
+@final
 class OwnershipStore:
-    root: Path
-    blob_dir: Path
-    meta_dir: Path
-    db_path: Path
-
     def __init__(self, store_root: Path) -> None:
         """Open the SQLite ownership index under *store_root*."""
         self.root = store_root
@@ -76,7 +71,7 @@ class OwnershipStore:
             if existing is not None and (existing[0] != blob.full_hash or existing[1] != blob.size):
                 accepted = False
                 return
-            if existing is None or not path.exists():
+            if existing is None or not self._blob_matches(path, blob.full_hash, blob.size):
                 self._atomic_write(path, blob.raw)
                 if not self._blob_matches(path, blob.full_hash, blob.size):
                     accepted = False
@@ -96,14 +91,14 @@ class OwnershipStore:
             _ = conn.execute(
                 """
                 INSERT INTO ownership(
-                  session_key, handle, state, tool, created_at, accessed_at, swept_at, reason
+                  session_key, handle, state, tool, size, created_at, accessed_at, swept_at, reason
                 )
-                VALUES (?, ?, 'live', ?, ?, ?, NULL, NULL)
+                VALUES (?, ?, 'live', ?, ?, ?, ?, NULL, NULL)
                 ON CONFLICT(session_key, handle) DO UPDATE SET
-                  state='live', tool=excluded.tool, accessed_at=excluded.accessed_at,
-                  swept_at=NULL, reason=NULL
+                  state='live', tool=excluded.tool, size=excluded.size,
+                  accessed_at=excluded.accessed_at, swept_at=NULL, reason=NULL
                 """,
-                (blob.session_key, blob.handle, blob.tool_name, now, now),
+                (blob.session_key, blob.handle, blob.tool_name, blob.size, now, now),
             )
             accepted = True
 
@@ -113,13 +108,17 @@ class OwnershipStore:
     def session_references(self, handle: str, session_id: str) -> bool:
         with self._connect() as conn:
             row = cast(
-                "ExistsRow | None",
+                "tuple[str, int] | None",
                 conn.execute(
-                    "SELECT 1 FROM ownership WHERE session_key=? AND handle=? AND state='live'",
+                    """
+                    SELECT blobs.full_hash, blobs.size
+                    FROM ownership JOIN blobs USING(handle)
+                    WHERE session_key=? AND handle=? AND state='live'
+                    """,
                     (safe_sid(session_id), handle),
                 ).fetchone(),
             )
-        return row is not None
+        return row is not None and self._blob_matches(self.blob_dir / handle, row[0], row[1])
 
     def tombstone_message(self, handle: str, session_id: str) -> str | None:
         with self._connect() as conn:
@@ -127,7 +126,8 @@ class OwnershipStore:
                 "tuple[str, int] | None",
                 conn.execute(
                     """
-                    SELECT tool, size FROM ownership JOIN blobs USING(handle)
+                    SELECT ownership.tool, COALESCE(blobs.size, ownership.size, 0)
+                    FROM ownership LEFT JOIN blobs USING(handle)
                     WHERE session_key=? AND handle=? AND state='tombstone'
                     """,
                     (safe_sid(session_id), handle),
@@ -148,7 +148,7 @@ class OwnershipStore:
                     "tuple[str, int] | None",
                     conn.execute(
                         """
-                        SELECT tool, size FROM ownership JOIN blobs USING(handle)
+                        SELECT ownership.tool, blobs.size FROM ownership JOIN blobs USING(handle)
                         WHERE handle=? AND state='live' AND ownership.session_key=? LIMIT 1
                         """,
                         (handle, safe_sid(session_id)),
@@ -159,7 +159,7 @@ class OwnershipStore:
                     "tuple[str, int] | None",
                     conn.execute(
                         """
-                        SELECT tool, size FROM ownership JOIN blobs USING(handle)
+                        SELECT ownership.tool, blobs.size FROM ownership JOIN blobs USING(handle)
                         WHERE handle=? AND state='live' LIMIT 1
                         """,
                         (handle,),
