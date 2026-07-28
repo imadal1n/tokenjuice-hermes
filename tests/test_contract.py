@@ -216,6 +216,7 @@ def test_installed_directory_plugin_layout_imports(tmp_path: Path) -> None:
         "rescue_sqlite.py",
         "rescue_sqlite_maintenance.py",
         "rescue_sqlite_migration.py",
+        "rescue_sqlite_schema.py",
         "rescue_sqlite_types.py",
         "rescue_store.py",
         "rescue_sweep.py",

@@ -15,10 +15,10 @@ from .rescue_sqlite_maintenance import reconcile as reconcile_store
 from .rescue_sqlite_maintenance import stats as store_stats_for
 from .rescue_sqlite_maintenance import sweep as sweep_store
 from .rescue_sqlite_migration import MigrationContext, migrate_legacy_indexes
+from .rescue_sqlite_schema import initialize_database
 from .rescue_sqlite_types import (
     BUSY_TIMEOUT_MS,
     DB_NAME,
-    SCHEMA,
     BlobMeta,
     BlobWrite,
     ReconcileStats,
@@ -207,9 +207,9 @@ class OwnershipStore:
                 with sqlite3.connect(
                     self.db_path, timeout=BUSY_TIMEOUT_MS / 1000, isolation_level=None
                 ) as conn:
-                    _ = conn.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
-                    _ = conn.execute("PRAGMA journal_mode=DELETE")
-                    _ = conn.executescript(SCHEMA)
+                    conn.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}").close()
+                    conn.execute("PRAGMA journal_mode=DELETE").close()
+                    initialize_database(conn)
             except sqlite3.OperationalError as exc:
                 if "locked" not in str(exc).lower() or time.monotonic() >= deadline:
                     raise
