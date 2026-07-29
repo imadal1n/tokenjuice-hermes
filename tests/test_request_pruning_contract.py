@@ -2064,6 +2064,72 @@ class TestStructuredPruningHermesSeam:
         assert result["effective_messages"] == [system_message, multimodal_user]
         assert result["effective_system_prompt"] == ""
 
+    def test_hermes_seam_prefers_current_pressure_tokens_for_accounting(self) -> None:
+        # Given: contribution-local pressure is below trigger, but Hermes supplies
+        # the canonical full request pressure above the hard threshold.
+        cfg = dict(_STRUCTURED_PRUNING_TEST_CONFIG)
+        cfg["tokenjuice_prompt_pruning_protect_recent_messages"] = 0
+        cfg["tokenjuice_prompt_pruning_protect_recent_tool_interactions"] = 0
+        host = HermesHost(config=cast("dict[str, JsonValue]", cfg))
+        register(host)
+        callback = host.callbacks["structured_context_prune"]
+        threshold = cfg["tokenjuice_prompt_pruning_threshold_tokens"]
+        assert isinstance(threshold, int)
+        reset_stats()
+
+        user_message: dict[str, JsonValue] = {"role": "user", "content": "question"}
+        terminal_message: dict[str, JsonValue] = {
+            "role": "tool",
+            "tool_call_id": "call-pressure",
+            "name": "terminal",
+            "content": "old output",
+        }
+        contributions = [
+            _contribution(
+                contribution_id="user",
+                kind="message",
+                provenance="conversation_history",
+                class_="user_message",
+                stability="session_stable",
+                token_estimate=100,
+                prune_policy="never",
+                content="question",
+                provider_message=user_message,
+            ),
+            _contribution(
+                contribution_id="old-terminal",
+                kind="tool_interaction",
+                provenance="conversation_history",
+                class_="terminal_tool_output",
+                stability="turn_ephemeral",
+                token_estimate=5_000,
+                prune_policy="hard_clear_allowed",
+                content="old output",
+                provider_message=terminal_message,
+                age_seconds=7200,
+            ),
+        ]
+
+        # When: current_pressure_tokens is the only value above trigger.
+        raw_result = callback(
+            contributions,
+            phase="pre_api",
+            current_pressure_tokens=11_000,
+            threshold_tokens=threshold,
+            trigger_tokens=int(threshold * 0.8),
+            target_tokens=int(threshold * 0.75),
+            now_epoch_ms=_DETERMINISTIC_EPOCH_MS,
+        )
+
+        # Then: TokenJuice uses that supplied pressure and records the pruning.
+        assert isinstance(raw_result, dict)
+        result = cast("StructuredPruningResult", cast("object", raw_result))
+        assert result["effective_messages"] == [user_message]
+        status = status_snapshot()
+        assert status["structured_pruning_attempted_count"] == 1
+        assert status["structured_pruning_count"] == 1
+        assert status["structured_pruning_saved_tokens"] == 5_000
+
     def test_hermes_seam_returns_none_when_pressure_cannot_be_derived(self) -> None:
         # Given: no current_pressure_tokens and no contribution estimates from which
         # to derive true request pressure.
