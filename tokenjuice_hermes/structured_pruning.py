@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 from .observability import StructuredPruningStats, record_structured_pruning
 from .structured_pruning_apply import PruningApplicationPlan, apply_threshold_pruning
-from .structured_pruning_config import parse_config
+from .structured_pruning_config import TOKENJUICE_PROMPT_PRUNING_THRESHOLD_TOKENS, parse_config
 from .structured_pruning_groups import (
     build_groups,
     parse_contributions,
@@ -185,7 +185,8 @@ def _prepare_prune(
     threshold_tokens: int | None,
     context: dict[str, JsonValue],
 ) -> tuple[tuple[ContributionInternal, ...], PruningConfig, PressureRoute, int, int, int] | None:
-    config = parse_config(context)
+    config_context = _context_with_dynamic_threshold(context, threshold_tokens)
+    config = parse_config(config_context)
     if config is None or not config.enabled:
         return None
 
@@ -213,6 +214,17 @@ def _prepare_prune(
 
     route = PressureRoute.HARD if pressure >= effective_threshold else PressureRoute.SOFT
     return parsed_contributions, config, route, target_tokens, effective_threshold, pressure
+
+
+def _context_with_dynamic_threshold(
+    context: dict[str, JsonValue],
+    threshold_tokens: int | None,
+) -> dict[str, JsonValue]:
+    if threshold_tokens is None or threshold_tokens <= 0:
+        return context
+    if TOKENJUICE_PROMPT_PRUNING_THRESHOLD_TOKENS in context:
+        return context
+    return {**context, TOKENJUICE_PROMPT_PRUNING_THRESHOLD_TOKENS: threshold_tokens}
 
 
 def _resolve_threshold(
