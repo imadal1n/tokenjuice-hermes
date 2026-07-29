@@ -128,12 +128,13 @@ is written only after readable legacy indexes are fully processed, so incomplete
 migrations retry on the next startup. Unreadable non-empty legacy indexes are
 copied to `migration-quarantine/` and leave the marker absent.
 
-Writes are atomic. Blob reuse requires the existing content to match the recorded
-full hash and size, so corrupt bytes are not served as a valid rescue result.
-`lazy_sweep` tombstones expired ownership rows, removes unreferenced content, and
-enforces the size cap by deleting oldest content first. Tombstones remain for the
-secondary TTL so fetch can return a clear swept marker; tombstone rows do not
-need a matching blob row.
+Blob-file replacement is atomic, and SQLite metadata updates are transactional.
+Cross-surface failures remain fail-closed because fetch verifies ownership plus
+the recorded full hash and size before serving bytes. `lazy_sweep` tombstones
+expired ownership rows, removes unreferenced content, and enforces the size cap
+by deleting oldest content first. Tombstones remain for the secondary TTL so
+fetch can return a clear swept marker; tombstone rows do not need a matching blob
+row.
 
 The `tokenjuice_status` store report contains:
 
