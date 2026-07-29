@@ -355,6 +355,45 @@ class TestStructuredPruningObservability:
         }
         assert not any(token in text for token in forbidden)
 
+    def test_structured_pruning_records_config_rejections(self) -> None:
+        # Given: structured pruning is enabled but has an invalid config value.
+        from tokenjuice_hermes.structured_pruning import prune_structured_context  # noqa: PLC0415
+
+        reset_stats()
+        contribution: Contribution = {
+            "id": "d1",
+            "kind": "message",
+            "provenance": "conversation_history",
+            "class": "terminal_tool_output",
+            "stability": "volatile",
+            "cache_scope": "body",
+            "token_estimate": 1_000,
+            "char_count": 4_000,
+            "content_hash": "a" * 64,
+            "atomic_group_id": None,
+            "prune_policy": "hard_clear_allowed",
+            "protected_reason": "",
+            "created_at_epoch_ms": 0,
+            "content": "x" * 4_000,
+            "tool_calls": [],
+        }
+
+        # When: config parsing rejects the request before contribution accounting.
+        result = prune_structured_context(
+            [contribution],
+            current_pressure_tokens=11_000,
+            threshold_tokens=10_000,
+            tokenjuice_prompt_pruning_enabled=True,
+            tokenjuice_prompt_pruning_trigger_ratio="bad",
+        )
+
+        # Then: TokenJuice fails open with only an aggregate rejection counter.
+        assert result is None
+        status = _status_dict()
+        assert status["structured_pruning_config_rejected_count"] == 1
+        assert status["structured_pruning_attempted_count"] == 0
+        assert status["structured_pruning_saved_tokens"] == 0
+
     def test_structured_pruning_counters_fail_open(self) -> None:
         # Given: a stats recorder that raises during structured pruning accounting.
         from tokenjuice_hermes import observability  # noqa: PLC0415

@@ -3,7 +3,11 @@ from __future__ import annotations
 import contextlib
 from typing import TYPE_CHECKING
 
-from .observability import StructuredPruningStats, record_structured_pruning
+from .observability import (
+    StructuredPruningStats,
+    record_structured_pruning,
+    record_structured_pruning_config_rejected,
+)
 from .structured_pruning_apply import PruningApplicationPlan, apply_threshold_pruning
 from .structured_pruning_config import TOKENJUICE_PROMPT_PRUNING_THRESHOLD_TOKENS, parse_config
 from .structured_pruning_groups import (
@@ -185,8 +189,7 @@ def _prepare_prune(
     threshold_tokens: int | None,
     context: dict[str, JsonValue],
 ) -> tuple[tuple[ContributionInternal, ...], PruningConfig, PressureRoute, int, int, int] | None:
-    config_context = _context_with_dynamic_threshold(context, threshold_tokens)
-    config = parse_config(config_context)
+    config = _parse_config_or_record_rejection(context, threshold_tokens)
     if config is None or not config.enabled:
         return None
 
@@ -214,6 +217,17 @@ def _prepare_prune(
 
     route = PressureRoute.HARD if pressure >= effective_threshold else PressureRoute.SOFT
     return parsed_contributions, config, route, target_tokens, effective_threshold, pressure
+
+
+def _parse_config_or_record_rejection(
+    context: dict[str, JsonValue],
+    threshold_tokens: int | None,
+) -> PruningConfig | None:
+    config_context = _context_with_dynamic_threshold(context, threshold_tokens)
+    config = parse_config(config_context)
+    if config is None:
+        record_structured_pruning_config_rejected()
+    return config
 
 
 def _context_with_dynamic_threshold(

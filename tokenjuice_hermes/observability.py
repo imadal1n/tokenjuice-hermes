@@ -40,6 +40,7 @@ class _Counters:
         "rescue_chars_saved",
         "rescue_count",
         "structured_pruning_attempted_count",
+        "structured_pruning_config_rejected_count",
         "structured_pruning_count",
         "structured_pruning_insufficient_eligible_savings",
         "structured_pruning_rescued_count",
@@ -60,6 +61,7 @@ class _Counters:
         self.passref_budget_exceeded_count: int = 0
         self.passref_chars_expanded: int = 0
         self.structured_pruning_attempted_count: int = 0
+        self.structured_pruning_config_rejected_count: int = 0
         self.structured_pruning_count: int = 0
         self.structured_pruning_rescued_count: int = 0
         self.structured_pruning_insufficient_eligible_savings: int = 0
@@ -91,6 +93,7 @@ def reset_stats() -> None:
     _COUNTERS.passref_budget_exceeded_count = 0
     _COUNTERS.passref_chars_expanded = 0
     _COUNTERS.structured_pruning_attempted_count = 0
+    _COUNTERS.structured_pruning_config_rejected_count = 0
     _COUNTERS.structured_pruning_count = 0
     _COUNTERS.structured_pruning_rescued_count = 0
     _COUNTERS.structured_pruning_insufficient_eligible_savings = 0
@@ -183,6 +186,11 @@ def record_structured_pruning(
             _COUNTERS.structured_pruning_saved_tokens += saved_tokens
 
 
+def record_structured_pruning_config_rejected() -> None:
+    with contextlib.suppress(Exception):
+        _COUNTERS.structured_pruning_config_rejected_count += 1
+
+
 def _count_index_entries(meta_dir: Path) -> tuple[int, int]:
     """Return (live_count, tombstone_count) across all session indices."""
     store_root = meta_dir.parent
@@ -272,6 +280,9 @@ def status_snapshot(store_path: str = "") -> dict[str, object]:
         "passref_budget_exceeded_count": _COUNTERS.passref_budget_exceeded_count,
         "passref_chars_expanded": _COUNTERS.passref_chars_expanded,
         "structured_pruning_attempted_count": _COUNTERS.structured_pruning_attempted_count,
+        "structured_pruning_config_rejected_count": (
+            _COUNTERS.structured_pruning_config_rejected_count
+        ),
         "structured_pruning_count": _COUNTERS.structured_pruning_count,
         "structured_pruning_rescued_count": _COUNTERS.structured_pruning_rescued_count,
         "structured_pruning_insufficient_eligible_savings": (
