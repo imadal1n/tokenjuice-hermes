@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 import pytest
 
@@ -15,9 +15,15 @@ if TYPE_CHECKING:
     from _pytest.monkeypatch import MonkeyPatch
 
 
+class TrackedConnectionProtocol(Protocol):
+    def execute(self, sql: str, /) -> sqlite3.Cursor: ...
+
+    def close(self) -> None: ...
+
+
 @dataclass(frozen=True, slots=True)
 class ConnectionTracker:
-    connections: list[sqlite3.Connection]
+    connections: list[TrackedConnectionProtocol]
 
     @property
     def closed_count(self) -> int:
@@ -50,7 +56,24 @@ def _closed_by_phase(tracker: ConnectionTracker) -> tuple[int, int]:
     return len(tracker.connections), tracker.closed_count
 
 
-def _is_closed(connection: sqlite3.Connection) -> bool:
+class FailingSetupConnection:
+    def __init__(self) -> None:
+        self.closed: bool = False
+
+    def execute(self, sql: str, /) -> sqlite3.Cursor:
+        if sql == "PRAGMA foreign_keys=ON":
+            message = "simulated pragma setup failure"
+            raise sqlite3.OperationalError(message)
+        message = "unexpected SQL after setup failure"
+        raise AssertionError(message)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def _is_closed(connection: TrackedConnectionProtocol) -> bool:
+    if isinstance(connection, FailingSetupConnection):
+        return connection.closed
     try:
         connection.execute("SELECT 1").close()
     except sqlite3.ProgrammingError:
@@ -129,4 +152,39 @@ def test_rescue_sqlite_closes_connections_across_locked_retry(
     assert attempts == 2
     assert store.fetch(handle, mode="full", session_id="session-a") == "retry payload"
     opened, closed = _closed_by_phase(tracker)
+    assert closed == opened
+
+
+def test_rescue_sqlite_closes_connection_when_connect_setup_raises(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    # Given: sqlite connection acquisition succeeds but setup PRAGMA fails.
+    tracker = ConnectionTracker(connections=[])
+
+    def connect_with_setup_failure(
+        database: str | bytes | Path,
+        *,
+        timeout: float,
+        isolation_level: None,
+    ) -> FailingSetupConnection:
+        _ = database
+        _ = timeout
+        _ = isolation_level
+        connection = FailingSetupConnection()
+        tracker.connections.append(connection)
+        return connection
+
+    monkeypatch.setattr(
+        "tokenjuice_hermes.rescue_sqlite.sqlite3.connect",
+        connect_with_setup_failure,
+    )
+
+    # When: store initialization hits the setup failure before returning the connection.
+    with pytest.raises(sqlite3.OperationalError, match="simulated pragma setup failure"):
+        _ = BlobStore({"store_path": str(tmp_path)})
+
+    # Then: the acquired connection is closed before the setup exception propagates.
+    opened, closed = _closed_by_phase(tracker)
+    assert opened == 1
     assert closed == opened

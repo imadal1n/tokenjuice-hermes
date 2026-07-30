@@ -216,9 +216,14 @@ class OwnershipStore:
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path, timeout=BUSY_TIMEOUT_MS / 1000, isolation_level=None)
-        _ = conn.execute("PRAGMA foreign_keys=ON")
-        _ = conn.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
-        return conn
+        try:
+            conn.execute("PRAGMA foreign_keys=ON").close()
+            conn.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}").close()
+        except BaseException:
+            conn.close()
+            raise
+        else:
+            return conn
 
     def _write_tx(self, operation: Callable[[sqlite3.Connection], None]) -> None:
         deadline = time.monotonic() + BUSY_TIMEOUT_MS / 1000

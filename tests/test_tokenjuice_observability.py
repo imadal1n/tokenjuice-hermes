@@ -295,10 +295,10 @@ def test_observability_fail_open_does_not_change_outputs(
     assert extract_hex_handle(result) is not None
 
 
-def test_tokenjuice_status_tool_registered_on_capable_host() -> None:
+def test_tokenjuice_status_tool_registered_on_capable_host(tmp_path: Path) -> None:
     # Given: a host that exposes register_tool.
     host = ToolHost()
-    host.config = {}
+    host.config = {"tokenjuice_rescue_store_path": str(tmp_path)}
     register(host)
 
     # When: the plugin registers.
