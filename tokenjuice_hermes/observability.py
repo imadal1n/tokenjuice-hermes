@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar, Final
@@ -242,8 +243,11 @@ def _compute_store_stats(store_path: str) -> dict[str, int]:
     except (OSError, ValueError):
         return _empty_store_stats()
 
-    live_count, tombstone_count = _count_index_entries(base / "sessions")
-    file_count, total_bytes = _sum_blob_sizes(base / "blobs")
+    try:
+        live_count, tombstone_count = _count_index_entries(base / "sessions")
+        file_count, total_bytes = _sum_blob_sizes(base / "blobs")
+    except (OSError, sqlite3.Error):
+        return _empty_store_stats()
 
     return {
         "live_blob_count": live_count,
@@ -254,12 +258,7 @@ def _compute_store_stats(store_path: str) -> dict[str, int]:
 
 
 def _empty_store_stats() -> dict[str, int]:
-    return {
-        "live_blob_count": 0,
-        "tombstone_count": 0,
-        "total_blob_bytes": 0,
-        "blob_file_count": 0,
-    }
+    return {"live_blob_count": 0, "tombstone_count": 0, "total_blob_bytes": 0, "blob_file_count": 0}
 
 
 def status_snapshot(store_path: str = "") -> dict[str, object]:

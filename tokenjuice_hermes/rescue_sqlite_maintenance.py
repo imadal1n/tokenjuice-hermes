@@ -84,7 +84,7 @@ def sweep(store: MaintenanceContext, now: float, ttl: float, tomb_ttl: float, ma
 
 
 def stats(store: MaintenanceContext) -> StoreStats:
-    with store.connect() as conn:
+    with contextlib.closing(store.connect()) as conn:
         live = cast(
             "CountRow | None",
             conn.execute("SELECT count(*) FROM ownership WHERE state='live'").fetchone(),

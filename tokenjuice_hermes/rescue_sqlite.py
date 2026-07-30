@@ -106,7 +106,7 @@ class OwnershipStore:
         return accepted
 
     def session_references(self, handle: str, session_id: str) -> bool:
-        with self._connect() as conn:
+        with contextlib.closing(self._connect()) as conn:
             row = cast(
                 "tuple[str, int] | None",
                 conn.execute(
@@ -121,7 +121,7 @@ class OwnershipStore:
         return row is not None and self._blob_matches(self.blob_dir / handle, row[0], row[1])
 
     def tombstone_message(self, handle: str, session_id: str) -> str | None:
-        with self._connect() as conn:
+        with contextlib.closing(self._connect()) as conn:
             row = cast(
                 "tuple[str, int] | None",
                 conn.execute(
@@ -142,7 +142,7 @@ class OwnershipStore:
         )
 
     def find_meta(self, handle: str, session_id: str = "") -> BlobMeta:
-        with self._connect() as conn:
+        with contextlib.closing(self._connect()) as conn:
             if session_id:
                 row = cast(
                     "tuple[str, int] | None",
@@ -204,10 +204,7 @@ class OwnershipStore:
         deadline = time.monotonic() + BUSY_TIMEOUT_MS / 1000
         while True:
             try:
-                with sqlite3.connect(
-                    self.db_path, timeout=BUSY_TIMEOUT_MS / 1000, isolation_level=None
-                ) as conn:
-                    conn.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}").close()
+                with contextlib.closing(self._connect()) as conn:
                     conn.execute("PRAGMA journal_mode=DELETE").close()
                     initialize_database(conn)
             except sqlite3.OperationalError as exc:
@@ -227,7 +224,7 @@ class OwnershipStore:
         deadline = time.monotonic() + BUSY_TIMEOUT_MS / 1000
         delay = 0.01
         while True:
-            with self._connect() as conn:
+            with contextlib.closing(self._connect()) as conn:
                 try:
                     _ = conn.execute("BEGIN IMMEDIATE")
                     operation(conn)

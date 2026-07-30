@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import sqlite3
 from typing import TYPE_CHECKING
@@ -58,7 +59,7 @@ def test_origin_main_sqlite_schema_reopens_with_live_and_tombstone_rows(
     session_dir.mkdir()
     live_handle, live_hash, live_size = _legacy_blob(blob_dir, "before upgrade")
     tombstone_handle = "111111111111"
-    with sqlite3.connect(tmp_path / DB_NAME) as conn:
+    with contextlib.closing(sqlite3.connect(tmp_path / DB_NAME)) as conn, conn:
         _ = conn.executescript(_origin_main_schema())
         _ = conn.executemany(
             "INSERT INTO sessions(session_key, created_at) VALUES (?, ?)",
@@ -93,7 +94,7 @@ def test_origin_main_sqlite_schema_reopens_with_live_and_tombstone_rows(
     upgraded = BlobStore({"store_path": str(tmp_path)})
     new_handle = upgraded.put("after upgrade", tool_name="web_search", session_id="session-live")
     no_blob_tombstone = "222222222222"
-    with sqlite3.connect(tmp_path / DB_NAME) as conn:
+    with contextlib.closing(sqlite3.connect(tmp_path / DB_NAME)) as conn, conn:
         conn.execute("PRAGMA foreign_keys=ON").close()
         conn.execute(
             "INSERT OR IGNORE INTO sessions(session_key, created_at) VALUES (?, ?)",
