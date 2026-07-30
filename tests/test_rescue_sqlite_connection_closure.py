@@ -57,8 +57,9 @@ def _closed_by_phase(tracker: ConnectionTracker) -> tuple[int, int]:
 
 
 class FailingSetupConnection:
-    def __init__(self) -> None:
+    def __init__(self, *, close_failure: sqlite3.Error | None = None) -> None:
         self.closed: bool = False
+        self.close_failure: sqlite3.Error | None = close_failure
 
     def execute(self, sql: str, /) -> sqlite3.Cursor:
         if sql == "PRAGMA foreign_keys=ON":
@@ -69,6 +70,8 @@ class FailingSetupConnection:
 
     def close(self) -> None:
         self.closed = True
+        if self.close_failure is not None:
+            raise self.close_failure
 
 
 def _is_closed(connection: TrackedConnectionProtocol) -> bool:
@@ -185,6 +188,43 @@ def test_rescue_sqlite_closes_connection_when_connect_setup_raises(
         _ = BlobStore({"store_path": str(tmp_path)})
 
     # Then: the acquired connection is closed before the setup exception propagates.
+    opened, closed = _closed_by_phase(tracker)
+    assert opened == 1
+    assert closed == opened
+
+
+def test_rescue_sqlite_preserves_setup_failure_when_close_raises(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    # Given: setup fails, and cleanup close also fails.
+    tracker = ConnectionTracker(connections=[])
+
+    def connect_with_setup_failure(
+        database: str | bytes | Path,
+        *,
+        timeout: float,
+        isolation_level: None,
+    ) -> FailingSetupConnection:
+        _ = database
+        _ = timeout
+        _ = isolation_level
+        connection = FailingSetupConnection(
+            close_failure=sqlite3.DatabaseError("MASKING close failure"),
+        )
+        tracker.connections.append(connection)
+        return connection
+
+    monkeypatch.setattr(
+        "tokenjuice_hermes.rescue_sqlite.sqlite3.connect",
+        connect_with_setup_failure,
+    )
+
+    # When: setup and cleanup both fail.
+    with pytest.raises(sqlite3.OperationalError, match="simulated pragma setup failure"):
+        _ = BlobStore({"store_path": str(tmp_path)})
+
+    # Then: cleanup was attempted, but the original setup exception propagated.
     opened, closed = _closed_by_phase(tracker)
     assert opened == 1
     assert closed == opened

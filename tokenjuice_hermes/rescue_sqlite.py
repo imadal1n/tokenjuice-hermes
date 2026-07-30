@@ -220,7 +220,8 @@ class OwnershipStore:
             conn.execute("PRAGMA foreign_keys=ON").close()
             conn.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}").close()
         except BaseException:
-            conn.close()
+            with contextlib.suppress(sqlite3.Error):
+                conn.close()
             raise
         else:
             return conn
